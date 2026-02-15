@@ -6,7 +6,7 @@ a handler command for each event. The event data is passed via the
 JULES_EVENT environment variable.
 
 Usage:
-    python jules_event_watcher.py --command "python zai_event_handler.py"
+    python jules_event_watcher.py --command "python event_handler.py"
 
 The watcher tracks its read position in a state file, allowing it to
 resume where it left off after restarts.
@@ -22,8 +22,8 @@ import sys
 import time
 from typing import Any, Dict
 
-DEFAULT_CONFIG_PATH = os.getenv("ZAI_JULES_CONFIG", "zai-jules-manager/config.json")
-DEFAULT_STATE_PATH = ".zai_watcher_state.json"
+DEFAULT_CONFIG_PATH = os.getenv("JULES_CONFIG", "jules-manager/config.json")
+DEFAULT_STATE_PATH = ".watcher_state.json"
 DEFAULT_POLL_SECONDS = 1
 
 
@@ -97,7 +97,7 @@ def watch(events_path: str, command: str, poll: float, state_path: str) -> None:
     state = load_state(state_path)
     offset = int(state.get("offset", 0))
 
-    print(f"ZAI Event Watcher started", file=sys.stderr)
+    print(f"Event Watcher started", file=sys.stderr)
     print(f"Events: {events_path}", file=sys.stderr)
     print(f"Handler: {command}", file=sys.stderr)
 
@@ -124,11 +124,16 @@ def watch(events_path: str, command: str, poll: float, state_path: str) -> None:
                     # Invoke handler
                     event_type = event.get("event", "unknown")
                     job_id = event.get("job_id", "unknown")
-                    print(f"Processing {event_type} event for job {job_id}", file=sys.stderr)
-                    
+                    print(
+                        f"Processing {event_type} event for job {job_id}",
+                        file=sys.stderr,
+                    )
+
                     exit_code = run_command(command, event)
                     if exit_code != 0:
-                        print(f"Handler returned exit code {exit_code}", file=sys.stderr)
+                        print(
+                            f"Handler returned exit code {exit_code}", file=sys.stderr
+                        )
 
                 # Update offset to end of file
                 offset = handle.tell()
@@ -153,7 +158,10 @@ def main() -> int:
     state_path = args.state or config.get("watcher_state_path", DEFAULT_STATE_PATH)
 
     if not events_path:
-        print("Error: events_path must be provided via --events or config", file=sys.stderr)
+        print(
+            "Error: events_path must be provided via --events or config",
+            file=sys.stderr,
+        )
         return 1
 
     if not command:

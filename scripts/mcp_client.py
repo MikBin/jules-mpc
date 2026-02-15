@@ -6,7 +6,7 @@ tools on the Jules MCP server. It sends a JSON-RPC request via stdin
 and outputs the JSON result.
 
 Usage:
-    python mcp_client.py --command python zai-jules-manager/mcp-server/jules_mcp_server.py --tool jules_get_job --arguments '{"job_id": "abc123"}'
+    python mcp_client.py --command python jules-manager/mcp-server/jules_mcp_server.py --tool jules_get_job --arguments '{"job_id": "abc123"}'
 
 Arguments:
     --command: The command to run the MCP server (required, space-separated)
@@ -51,7 +51,9 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
-def call_tool(command: List[str], tool: str, arguments: Dict[str, Any]) -> Dict[str, Any]:
+def call_tool(
+    command: List[str], tool: str, arguments: Dict[str, Any]
+) -> Dict[str, Any]:
     """Call an MCP tool and return the result.
 
     Sends a JSON-RPC request to the MCP server via stdin and parses
@@ -74,7 +76,7 @@ def call_tool(command: List[str], tool: str, arguments: Dict[str, Any]) -> Dict[
         "method": "tools/call",
         "params": {"name": tool, "arguments": arguments},
     }
-    
+
     process = subprocess.run(
         command,
         input=json.dumps(request),
@@ -82,10 +84,10 @@ def call_tool(command: List[str], tool: str, arguments: Dict[str, Any]) -> Dict[
         capture_output=True,
         check=False,
     )
-    
+
     if process.returncode != 0:
         raise RuntimeError(process.stderr.strip() or "MCP command failed")
-    
+
     # Parse response - may have multiple lines (e.g., initialization)
     for line in process.stdout.splitlines():
         line = line.strip()
@@ -95,25 +97,25 @@ def call_tool(command: List[str], tool: str, arguments: Dict[str, Any]) -> Dict[
             response = json.loads(line)
         except json.JSONDecodeError:
             continue
-            
+
         if response.get("id") == "mcp-client":
             if "error" in response:
                 raise RuntimeError(f"MCP error: {response['error']}")
             return response.get("result", {})
-    
+
     return {}
 
 
 def main() -> int:
     """Main entry point for the MCP client."""
     args = parse_args()
-    
+
     try:
         arguments = json.loads(args.arguments)
     except json.JSONDecodeError as exc:
         print(f"Error: Invalid JSON in --arguments: {exc}", file=sys.stderr)
         return 1
-    
+
     try:
         result = call_tool(args.command, args.tool, arguments)
         print(json.dumps(result, indent=2))

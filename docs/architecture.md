@@ -1,8 +1,8 @@
-# ZAI Jules Manager - Architectural Design
+# Jules Manager - Architectural Design
 
 ## Overview
 
-A token-efficient orchestration framework where a local coding agent (ZAI) manages a remote Google Jules agent. The system handles the full lifecycle: task decomposition, API-based dispatch to Jules, asynchronous status monitoring, intervention handling, code review, and PR merging.
+An MCP server implementation for orchestrating Google Jules as a remote coding agent from a local coding agent. The system handles the full lifecycle: task decomposition, API-based dispatch to Jules, asynchronous status monitoring, intervention handling, code review, and PR merging.
 
 **Core Constraint:** The local agent must not waste context window tokens on active polling. A decoupled monitoring mechanism handles polling independently and only triggers the local agent when human-level input or a final review is required.
 
@@ -15,20 +15,20 @@ A token-efficient orchestration framework where a local coding agent (ZAI) manag
 ```mermaid
 sequenceDiagram
     participant User
-    participant ZAI as ZAI Local Agent
+    participant LocalAgent as Local Agent
     participant MCP as MCP Server
     participant Monitor as Background Monitor
     participant Watcher as Event Watcher
     participant Jules as Google Jules API
     participant Queue as Event Queue
 
-    User->>ZAI: Submit task
-    ZAI->>ZAI: Analyze and decompose task
-    ZAI->>MCP: jules_create_job
+    User->>LocalAgent: Submit task
+    LocalAgent->>LocalAgent: Analyze and decompose task
+    LocalAgent->>MCP: jules_create_job
     MCP->>Jules: POST /jobs
     Jules-->>MCP: job_id
-    MCP-->>ZAI: job_id
-    ZAI->>MCP: jules_register_job
+    MCP-->>LocalAgent: job_id
+    LocalAgent->>MCP: jules_register_job
     MCP->>Queue: Write to jobs.jsonl
     
     Note over Monitor: Runs independently
@@ -40,26 +40,26 @@ sequenceDiagram
     
     Note over Watcher: Tails event queue
     Watcher->>Queue: Read events.jsonl
-    Watcher->>ZAI: Trigger with JULES_EVENT
+    Watcher->>LocalAgent: Trigger with JULES_EVENT
     
     alt Question Event
-        ZAI->>MCP: jules_send_message
+        LocalAgent->>MCP: jules_send_message
         MCP->>Jules: POST /jobs/id/messages
     else Completion Event
-        ZAI->>MCP: jules_get_artifacts
+        LocalAgent->>MCP: jules_get_artifacts
         MCP->>Jules: GET /jobs/id/artifacts
-        ZAI->>ZAI: Review code
-        ZAI->>MCP: jules_merge_pr
+        LocalAgent->>LocalAgent: Review code
+        LocalAgent->>MCP: jules_merge_pr
         MCP->>Jules: POST /jobs/id/merge
     else Error Event
-        ZAI->>MCP: jules_request_retry
+        LocalAgent->>MCP: jules_request_retry
         MCP->>Jules: POST /jobs/id/retry
     end
 ```
 
 ### Lifecycle Phases
 
-| Phase | Description | ZAI Action | Background Process |
+| Phase | Description | Local Agent Action | Background Process |
 |-------|-------------|------------|-------------------|
 | 1. Intake | Receive user task | Analyze scope, success criteria | None |
 | 2. Decomposition | Break into Jules-sized work | Create subtasks, define acceptance | None |
@@ -77,7 +77,7 @@ sequenceDiagram
 ### Custom MCP Server Specification
 
 #### Server Identity
-- **Name:** `zai-jules-mcp`
+- **Name:** `jules-mcp`
 - **Version:** `1.0.0`
 - **Protocol Version:** `2024-11-05`
 - **Transport:** stdio JSON-RPC
@@ -117,8 +117,8 @@ flowchart TB
         E[Events JSONL]
     end
     
-    subgraph ZAI Context
-        Z[ZAI Agent]
+    subgraph Local Agent Context
+        Z[Local Agent]
         H[Event Handler]
     end
     
@@ -141,11 +141,11 @@ flowchart TB
 
 The monitor runs as an independent process with its own token budget:
 
-1. **Read Jobs File:** Load active job IDs from `zai_jobs.jsonl`
+1. **Read Jobs File:** Load active job IDs from `jobs.jsonl`
 2. **Poll Jules API:** Query each job status at configured interval
 3. **Track State:** Maintain cursor and last-known status per job
 4. **Filter Events:** Only emit actionable events
-5. **Write Events:** Append to `zai_events.jsonl`
+5. **Write Events:** Append to `events.jsonl`
 
 ### Actionable Event Types
 
@@ -175,7 +175,7 @@ The monitor runs as an independent process with its own token budget:
 ```mermaid
 flowchart LR
     subgraph Traditional Polling - Wasteful
-        A1[Agent] -->|Query| J1[Jules]
+        A1[Local Agent] -->|Query| J1[Jules]
         J1 -->|In Progress| A1
         A1 -->|Query| J1
         J1 -->|In Progress| A1
@@ -184,7 +184,7 @@ flowchart LR
     end
     
     subgraph Decoupled Monitoring - Efficient
-        A2[Agent] -->|Register| M2[Monitor]
+        A2[Local Agent] -->|Register| M2[Monitor]
         M2 -->|Poll| J2[Jules]
         J2 -->|In Progress| M2
         M2 -->|Silent| M2
@@ -194,18 +194,18 @@ flowchart LR
     end
 ```
 
-**Key Insight:** The agent only wakes when the monitor writes an actionable event. All intermediate polling happens outside the agent context.
+**Key Insight:** The local agent only wakes when the monitor writes an actionable event. All intermediate polling happens outside the agent context.
 
 ---
 
 ## 4. Project Structure
 
 ```
-zai-jules-manager/
+jules-manager/
 ├── README.md                    # Quick start guide
 ├── config.json                  # Shared configuration
-├── zai_jobs.jsonl               # Active jobs registry
-├── zai_events.jsonl             # Actionable event queue
+├── jobs.jsonl                   # Active jobs registry
+├── events.jsonl                 # Actionable event queue
 ├── docs/
 │   └── architecture.md          # This document
 ├── mcp-server/
@@ -214,7 +214,7 @@ zai-jules-manager/
 └── scripts/
     ├── jules_monitor.py         # Background poller
     ├── jules_event_watcher.py   # Event queue watcher
-    ├── zai_event_handler.py     # ZAI-specific handler
+    ├── event_handler.py         # Event handler
     └── mcp_client.py            # CLI MCP client helper
 ```
 
@@ -224,16 +224,16 @@ zai-jules-manager/
 
 ```json
 {
-  "jobs_path": "zai-jules-manager/zai_jobs.jsonl",
-  "events_path": "zai-jules-manager/zai_events.jsonl",
-  "monitor_state_path": "zai-jules-manager/.zai_monitor_state.json",
-  "watcher_state_path": "zai-jules-manager/.zai_watcher_state.json",
+  "jobs_path": "jules-manager/jobs.jsonl",
+  "events_path": "jules-manager/events.jsonl",
+  "monitor_state_path": "jules-manager/.monitor_state.json",
+  "watcher_state_path": "jules-manager/.watcher_state.json",
   "monitor_poll_seconds": 45,
   "watcher_poll_seconds": 1,
   "stuck_minutes": 20,
   "api_base": "https://jules.googleapis.com/v1",
-  "mcp_command": ["python", "zai-jules-manager/mcp-server/jules_mcp_server.py"],
-  "zai_command": ["zai", "handle-event"]
+  "mcp_command": ["python", "jules-manager/mcp-server/jules_mcp_server.py"],
+  "event_command": ["python", "jules-manager/scripts/event_handler.py"]
 }
 ```
 
@@ -253,25 +253,25 @@ A minimal stdio JSON-RPC server that:
 
 A long-running Python script that:
 - Loads configuration from config.json
-- Reads active jobs from zai_jobs.jsonl
+- Reads active jobs from jobs.jsonl
 - Polls Jules API at configured interval
-- Maintains state in .zai_monitor_state.json
-- Writes actionable events to zai_events.jsonl
+- Maintains state in .monitor_state.json
+- Writes actionable events to events.jsonl
 
 ### 6.3 Event Watcher (jules_event_watcher.py)
 
 A file-tailing script that:
-- Monitors zai_events.jsonl for new entries
+- Monitors events.jsonl for new entries
 - Invokes handler command with JULES_EVENT env var
-- Tracks read offset in .zai_watcher_state.json
+- Tracks read offset in .watcher_state.json
 
-### 6.4 ZAI Event Handler (zai_event_handler.py)
+### 6.4 Event Handler (event_handler.py)
 
-The ZAI-specific handler that:
+The event handler that:
 - Reads JULES_EVENT from environment
 - Routes to appropriate handler based on event type
 - Invokes MCP tools for Jules interaction
-- Returns control to ZAI main context
+- Returns control to the local agent main context
 
 ---
 
@@ -281,19 +281,19 @@ The ZAI-specific handler that:
 
 ```bash
 # Terminal 1: Start MCP server (if needed for direct calls)
-python zai-jules-manager/mcp-server/jules_mcp_server.py
+python jules-manager/mcp-server/jules_mcp_server.py
 
 # Terminal 2: Start background monitor
-python zai-jules-manager/scripts/jules_monitor.py --config zai-jules-manager/config.json
+python jules-manager/scripts/jules_monitor.py --config jules-manager/config.json
 
 # Terminal 3: Start event watcher
-python zai-jules-manager/scripts/jules_event_watcher.py --command "python zai-jules-manager/scripts/zai_event_handler.py"
+python jules-manager/scripts/jules_event_watcher.py --command "python jules-manager/scripts/event_handler.py"
 ```
 
-### ZAI Agent Workflow
+### Local Agent Workflow
 
 ```python
-# In ZAI context - creating a job
+# In local agent context - creating a job
 result = mcp_call("jules_create_job", {
     "repo": "owner/repo",
     "branch": "feature/new-auth",
@@ -304,12 +304,12 @@ job_id = result["job_id"]
 # Register for monitoring
 mcp_call("jules_register_job", {
     "job_id": job_id,
-    "jobs_path": "zai-jules-manager/zai_jobs.jsonl",
+    "jobs_path": "jules-manager/jobs.jsonl",
     "metadata": {"task": "OAuth2 implementation"}
 })
 
-# ZAI can now context-switch away - monitor handles polling
-# When actionable event occurs, handler invokes ZAI
+# Local agent can now context-switch away - monitor handles polling
+# When actionable event occurs, handler invokes the local agent
 ```
 
 ---

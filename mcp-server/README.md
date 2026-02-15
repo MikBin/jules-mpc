@@ -1,4 +1,4 @@
-# ZAI Jules MCP Server
+# Jules MCP Server
 
 A minimal MCP (Model Context Protocol) server that wraps the Google Jules API over stdio JSON-RPC.
 
@@ -8,7 +8,7 @@ This server implements the MCP protocol for interacting with Google Jules, an AI
 
 ## Server Identity
 
-- **Name:** `zai-jules-mcp`
+- **Name:** `jules-mcp`
 - **Version:** `1.0.0`
 - **Protocol Version:** `2024-11-05`
 - **Transport:** stdio JSON-RPC
@@ -52,7 +52,7 @@ Response:
   "id": 1,
   "result": {
     "protocolVersion": "2024-11-05",
-    "serverInfo": {"name": "zai-jules-mcp", "version": "1.0.0"},
+    "serverInfo": {"name": "jules-mcp", "version": "1.0.0"},
     "capabilities": {"tools": {}}
   }
 }
@@ -125,13 +125,13 @@ Errors are returned as JSON-RPC error responses:
 }
 ```
 
-## Integration with ZAI
+## Integration
 
-This MCP server is designed to work with the ZAI Jules Manager system:
+This MCP server is designed to work with the Jules Manager system:
 
-1. **ZAI Agent** calls MCP tools to create and register jobs
+1. **Local Agent** calls MCP tools to create and register jobs
 2. **Background Monitor** polls Jules API independently
-3. **Event Watcher** triggers ZAI when actionable events occur
+3. **Event Watcher** triggers the local agent when actionable events occur
 4. **Event Handler** uses MCP tools to respond to events
 
 See the main [README.md](../README.md) for full system documentation.

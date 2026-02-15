@@ -1,6 +1,6 @@
-# ZAI Jules Manager
+# Jules Manager
 
-A token-efficient orchestration framework where a local coding agent (ZAI) manages a remote Google Jules agent. The system handles the full lifecycle: task decomposition, API-based dispatch to Jules, asynchronous status monitoring, intervention handling, code review, and PR merging.
+An MCP server implementation for orchestrating Google Jules as a remote coding agent from a local coding agent. The system handles the full lifecycle: task decomposition, API-based dispatch to Jules, asynchronous status monitoring, intervention handling, code review, and PR merging.
 
 ## Core Principle
 
@@ -17,36 +17,36 @@ A token-efficient orchestration framework where a local coding agent (ZAI) manag
 
 ```bash
 # Terminal 1: Start the background monitor
-python zai-jules-manager/scripts/jules_monitor.py --config zai-jules-manager/config.json
+python jules-manager/scripts/jules_monitor.py --config jules-manager/config.json
 
 # Terminal 2: Start the event watcher
-python zai-jules-manager/scripts/jules_event_watcher.py --command "python zai-jules-manager/scripts/zai_event_handler.py"
+python jules-manager/scripts/jules_event_watcher.py --command "python jules-manager/scripts/event_handler.py"
 ```
 
 ### Create a Job
 
 ```bash
 # Use the MCP client to create a job
-python zai-jules-manager/scripts/mcp_client.py \
-  --command python zai-jules-manager/mcp-server/jules_mcp_server.py \
+python jules-manager/scripts/mcp_client.py \
+  --command python jules-manager/mcp-server/jules_mcp_server.py \
   --tool jules_create_job \
   --arguments '{"repo": "owner/repo", "branch": "feature/new-auth", "prompt": "Implement OAuth2 authentication"}'
 
 # Register the job for monitoring
-python zai-jules-manager/scripts/mcp_client.py \
-  --command python zai-jules-manager/mcp-server/jules_mcp_server.py \
+python jules-manager/scripts/mcp_client.py \
+  --command python jules-manager/mcp-server/jules_mcp_server.py \
   --tool jules_register_job \
-  --arguments '{"job_id": "JOB_ID_FROM_ABOVE", "jobs_path": "zai-jules-manager/zai_jobs.jsonl"}'
+  --arguments '{"job_id": "JOB_ID_FROM_ABOVE", "jobs_path": "jules-manager/jobs.jsonl"}'
 ```
 
 ## Project Structure
 
 ```
-zai-jules-manager/
+jules-manager/
 ├── README.md                    # This file
 ├── config.json                  # Shared configuration
-├── zai_jobs.jsonl               # Active jobs registry
-├── zai_events.jsonl             # Actionable event queue
+├── jobs.jsonl                   # Active jobs registry
+├── events.jsonl                 # Actionable event queue
 ├── docs/
 │   └── architecture.md          # Detailed architecture documentation
 ├── mcp-server/
@@ -55,7 +55,7 @@ zai-jules-manager/
 └── scripts/
     ├── jules_monitor.py         # Background poller
     ├── jules_event_watcher.py   # Event queue watcher
-    ├── zai_event_handler.py     # ZAI-specific handler
+    ├── event_handler.py         # Event handler
     └── mcp_client.py            # CLI MCP client helper
 ```
 
@@ -64,12 +64,12 @@ zai-jules-manager/
 | File | Purpose |
 |------|---------|
 | `config.json` | Shared configuration for paths, polling intervals, and API settings |
-| `zai_jobs.jsonl` | Registry of active job IDs being monitored (one JSON object per line) |
-| `zai_events.jsonl` | Queue of actionable events emitted by the monitor |
+| `jobs.jsonl` | Registry of active job IDs being monitored (one JSON object per line) |
+| `events.jsonl` | Queue of actionable events emitted by the monitor |
 | `jules_mcp_server.py` | MCP server that wraps the Jules API with stdio JSON-RPC |
 | `jules_monitor.py` | Background daemon that polls Jules API and emits events |
 | `jules_event_watcher.py` | Tails events.jsonl and invokes handlers for new events |
-| `zai_event_handler.py` | Routes events to appropriate handlers based on type |
+| `event_handler.py` | Routes events to appropriate handlers based on type |
 | `mcp_client.py` | CLI tool for calling MCP tools from the command line |
 
 ## Environment Variables
@@ -78,7 +78,7 @@ zai-jules-manager/
 |----------|----------|-------------|
 | `JULES_API_TOKEN` | Yes | Bearer token for Jules API authentication |
 | `JULES_API_BASE` | No | Base URL for Jules API (default: https://jules.googleapis.com/v1) |
-| `ZAI_JULES_CONFIG` | No | Path to config.json (default: zai-jules-manager/config.json) |
+| `JULES_CONFIG` | No | Path to config.json (default: jules-manager/config.json) |
 
 ## Event Types
 
@@ -112,16 +112,16 @@ See `config.json` for all available settings:
 
 ```json
 {
-  "jobs_path": "zai-jules-manager/zai_jobs.jsonl",
-  "events_path": "zai-jules-manager/zai_events.jsonl",
-  "monitor_state_path": "zai-jules-manager/.zai_monitor_state.json",
-  "watcher_state_path": "zai-jules-manager/.zai_watcher_state.json",
+  "jobs_path": "jules-manager/jobs.jsonl",
+  "events_path": "jules-manager/events.jsonl",
+  "monitor_state_path": "jules-manager/.monitor_state.json",
+  "watcher_state_path": "jules-manager/.watcher_state.json",
   "monitor_poll_seconds": 45,
   "watcher_poll_seconds": 1,
   "stuck_minutes": 20,
   "api_base": "https://jules.googleapis.com/v1",
-  "mcp_command": ["python", "zai-jules-manager/mcp-server/jules_mcp_server.py"],
-  "zai_command": ["zai", "handle-event"]
+  "mcp_command": ["python", "jules-manager/mcp-server/jules_mcp_server.py"],
+  "event_command": ["python", "jules-manager/scripts/event_handler.py"]
 }
 ```
 

@@ -21,7 +21,7 @@ import urllib.request
 from typing import Any, Dict, Optional
 
 # Server identity
-SERVER_NAME = "zai-jules-mcp"
+SERVER_NAME = "jules-mcp"
 SERVER_VERSION = "1.0.0"
 PROTOCOL_VERSION = "2024-11-05"
 
@@ -45,11 +45,17 @@ def send_response(request_id: Any, result: Any) -> None:
 def send_error(request_id: Any, message: str, code: int = -32000) -> None:
     """Send a JSON-RPC error response."""
     write_message(
-        {"jsonrpc": "2.0", "id": request_id, "error": {"code": code, "message": message}}
+        {
+            "jsonrpc": "2.0",
+            "id": request_id,
+            "error": {"code": code, "message": message},
+        }
     )
 
 
-def build_request(url: str, method: str, payload: Optional[Dict[str, Any]]) -> urllib.request.Request:
+def build_request(
+    url: str, method: str, payload: Optional[Dict[str, Any]]
+) -> urllib.request.Request:
     """Build an HTTP request with proper headers."""
     headers = {"Accept": "application/json"}
     data = None
@@ -61,7 +67,9 @@ def build_request(url: str, method: str, payload: Optional[Dict[str, Any]]) -> u
     return urllib.request.Request(url, data=data, headers=headers, method=method)
 
 
-def request_json(url: str, method: str = "GET", payload: Optional[Dict[str, Any]] = None) -> Any:
+def request_json(
+    url: str, method: str = "GET", payload: Optional[Dict[str, Any]] = None
+) -> Any:
     """Make an HTTP request and return the JSON response."""
     request = build_request(url, method, payload)
     try:
@@ -88,10 +96,22 @@ def list_tools() -> Dict[str, Any]:
                 "inputSchema": {
                     "type": "object",
                     "properties": {
-                        "repo": {"type": "string", "description": "Repository in owner/repo format"},
-                        "branch": {"type": "string", "description": "Target branch name"},
-                        "prompt": {"type": "string", "description": "Task description for Jules"},
-                        "constraints": {"type": "object", "description": "Optional constraints for the job"},
+                        "repo": {
+                            "type": "string",
+                            "description": "Repository in owner/repo format",
+                        },
+                        "branch": {
+                            "type": "string",
+                            "description": "Target branch name",
+                        },
+                        "prompt": {
+                            "type": "string",
+                            "description": "Task description for Jules",
+                        },
+                        "constraints": {
+                            "type": "object",
+                            "description": "Optional constraints for the job",
+                        },
                     },
                     "additionalProperties": True,
                 },
@@ -102,9 +122,18 @@ def list_tools() -> Dict[str, Any]:
                 "inputSchema": {
                     "type": "object",
                     "properties": {
-                        "job_id": {"type": "string", "description": "The Jules job ID to register"},
-                        "jobs_path": {"type": "string", "description": "Path to the jobs JSONL file"},
-                        "metadata": {"type": "object", "description": "Optional metadata to store with the job"},
+                        "job_id": {
+                            "type": "string",
+                            "description": "The Jules job ID to register",
+                        },
+                        "jobs_path": {
+                            "type": "string",
+                            "description": "Path to the jobs JSONL file",
+                        },
+                        "metadata": {
+                            "type": "object",
+                            "description": "Optional metadata to store with the job",
+                        },
                     },
                     "required": ["job_id", "jobs_path"],
                 },
@@ -127,7 +156,10 @@ def list_tools() -> Dict[str, Any]:
                     "type": "object",
                     "properties": {
                         "job_id": {"type": "string", "description": "The Jules job ID"},
-                        "cursor": {"type": "string", "description": "Optional cursor for pagination"},
+                        "cursor": {
+                            "type": "string",
+                            "description": "Optional cursor for pagination",
+                        },
                     },
                     "required": ["job_id"],
                 },
@@ -139,7 +171,10 @@ def list_tools() -> Dict[str, Any]:
                     "type": "object",
                     "properties": {
                         "job_id": {"type": "string", "description": "The Jules job ID"},
-                        "message": {"type": "object", "description": "Message content to send"},
+                        "message": {
+                            "type": "object",
+                            "description": "Message content to send",
+                        },
                     },
                     "required": ["job_id", "message"],
                 },
@@ -173,7 +208,10 @@ def list_tools() -> Dict[str, Any]:
                     "type": "object",
                     "properties": {
                         "job_id": {"type": "string", "description": "The Jules job ID"},
-                        "payload": {"type": "object", "description": "Optional merge parameters"},
+                        "payload": {
+                            "type": "object",
+                            "description": "Optional merge parameters",
+                        },
                     },
                     "required": ["job_id"],
                 },
@@ -195,8 +233,14 @@ def list_tools() -> Dict[str, Any]:
                 "inputSchema": {
                     "type": "object",
                     "properties": {
-                        "repo": {"type": "string", "description": "Repository in owner/repo format"},
-                        "limit": {"type": "integer", "description": "Maximum number of jobs to return"},
+                        "repo": {
+                            "type": "string",
+                            "description": "Repository in owner/repo format",
+                        },
+                        "limit": {
+                            "type": "integer",
+                            "description": "Maximum number of jobs to return",
+                        },
                     },
                     "required": ["repo"],
                 },
@@ -208,7 +252,9 @@ def list_tools() -> Dict[str, Any]:
 def handle_tool_call(name: str, arguments: Dict[str, Any]) -> Any:
     """Handle a tool call and return the result."""
     if name == "jules_create_job":
-        return request_json(url_join(API_BASE, "jobs"), method="POST", payload=arguments)
+        return request_json(
+            url_join(API_BASE, "jobs"), method="POST", payload=arguments
+        )
 
     if name == "jules_register_job":
         jobs_path = arguments.get("jobs_path")

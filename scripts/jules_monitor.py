@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Background monitor that polls Jules jobs and emits actionable events.
 
-This script runs independently from the main ZAI agent context, polling the
+This script runs independently from the main local agent context, polling the
 Jules API at configured intervals and only surfacing actionable events that
 require human-level attention.
 
@@ -12,7 +12,7 @@ Actionable Events:
     - stuck: No progress for configured threshold minutes
 
 Usage:
-    python jules_monitor.py --config zai-jules-manager/config.json
+    python jules_monitor.py --config jules-manager/config.json
 
 Environment Variables:
     JULES_API_TOKEN: Bearer token for Jules API authentication
@@ -37,8 +37,8 @@ from typing import Any, Dict, Iterable, List, Optional
 DEFAULT_API_BASE = "https://jules.googleapis.com/v1"
 DEFAULT_POLL_SECONDS = 45
 DEFAULT_STUCK_MINUTES = 20
-DEFAULT_STATE_PATH = ".zai_monitor_state.json"
-DEFAULT_CONFIG_PATH = os.getenv("ZAI_JULES_CONFIG", "zai-jules-manager/config.json")
+DEFAULT_STATE_PATH = ".monitor_state.json"
+DEFAULT_CONFIG_PATH = os.getenv("JULES_CONFIG", "jules-manager/config.json")
 
 # Job statuses that are considered terminal/actionable
 ACTIONABLE_STATUSES = {"COMPLETED", "FAILED", "ERROR", "CANCELLED"}
@@ -152,7 +152,11 @@ def is_question_message(message: Dict[str, Any]) -> bool:
     role = str(message.get("role", "")).lower()
     tags = " ".join(str(tag).lower() for tag in message.get("tags", []))
     text = str(message.get("content", "")).lower()
-    return "question" in tags or "needs_input" in tags or ("?" in text and role == "assistant")
+    return (
+        "question" in tags
+        or "needs_input" in tags
+        or ("?" in text and role == "assistant")
+    )
 
 
 def messages_actionable(messages: Iterable[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
@@ -181,6 +185,7 @@ def should_emit_stuck(last_activity: Optional[str], threshold_minutes: int) -> b
 @dataclass
 class JobState:
     """Tracking state for a single job."""
+
     cursor: Optional[str] = None
     last_status: Optional[str] = None
     last_activity: Optional[str] = None
@@ -298,8 +303,15 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--jobs", help="Path to jobs JSON or JSONL file")
     parser.add_argument("--events", help="Path to events JSONL file")
-    parser.add_argument("--state", default=DEFAULT_STATE_PATH, help="Path to state JSON file")
-    parser.add_argument("--poll", type=int, default=DEFAULT_POLL_SECONDS, help="Poll interval in seconds")
+    parser.add_argument(
+        "--state", default=DEFAULT_STATE_PATH, help="Path to state JSON file"
+    )
+    parser.add_argument(
+        "--poll",
+        type=int,
+        default=DEFAULT_POLL_SECONDS,
+        help="Poll interval in seconds",
+    )
     parser.add_argument(
         "--stuck-minutes",
         type=int,
@@ -331,7 +343,9 @@ def main() -> int:
     state_path = args.state or config.get("monitor_state_path", DEFAULT_STATE_PATH)
     poll_seconds = args.poll or config.get("monitor_poll_seconds", DEFAULT_POLL_SECONDS)
     api_base = args.api_base or config.get("api_base", DEFAULT_API_BASE)
-    stuck_minutes = args.stuck_minutes or config.get("stuck_minutes", DEFAULT_STUCK_MINUTES)
+    stuck_minutes = args.stuck_minutes or config.get(
+        "stuck_minutes", DEFAULT_STUCK_MINUTES
+    )
 
     if not jobs_path or not events_path:
         print("Error: jobs_path and events_path must be provided", file=sys.stderr)
@@ -347,7 +361,7 @@ def main() -> int:
             last_activity=payload.get("last_activity"),
         )
 
-    print(f"ZAI Jules Monitor started - polling every {poll_seconds}s", file=sys.stderr)
+    print(f"Jules Monitor started - polling every {poll_seconds}s", file=sys.stderr)
     print(f"Jobs: {jobs_path}", file=sys.stderr)
     print(f"Events: {events_path}", file=sys.stderr)
 

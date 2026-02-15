@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""ZAI-specific event handler for Jules events.
+"""Event handler for Jules events.
 
 This handler is invoked by the event watcher when actionable events are
 detected. It routes events to appropriate handlers based on event type
@@ -17,7 +17,7 @@ Usage:
 
 Environment Variables:
     JULES_EVENT: JSON string containing the event data
-    ZAI_JULES_CONFIG: Path to config JSON file (optional)
+    JULES_CONFIG: Path to config JSON file (optional)
 """
 
 from __future__ import annotations
@@ -28,7 +28,7 @@ import subprocess
 import sys
 from typing import Any, Dict, List
 
-DEFAULT_CONFIG_PATH = os.getenv("ZAI_JULES_CONFIG", "zai-jules-manager/config.json")
+DEFAULT_CONFIG_PATH = os.getenv("JULES_CONFIG", "jules-manager/config.json")
 
 
 def load_event() -> Dict[str, Any]:
@@ -55,7 +55,7 @@ def run_mcp(command: List[str], tool: str, arguments: Dict[str, Any]) -> Dict[st
     """
     request = {
         "jsonrpc": "2.0",
-        "id": "zai-event-handler",
+        "id": "event-handler",
         "method": "tools/call",
         "params": {"name": tool, "arguments": arguments},
     }
@@ -73,7 +73,7 @@ def run_mcp(command: List[str], tool: str, arguments: Dict[str, Any]) -> Dict[st
         if not line:
             continue
         response = json.loads(line)
-        if response.get("id") == "zai-event-handler":
+        if response.get("id") == "event-handler":
             return response.get("result", {})
     return {}
 
@@ -84,26 +84,26 @@ def handle_question(event: Dict[str, Any], mcp_command: List[str]) -> None:
     Jules is asking for clarification or input. The handler logs the
     question and can optionally send a response via MCP.
 
-    In a full implementation, this would integrate with ZAI to generate
+    In a full implementation, this would integrate with the local agent to generate
     appropriate responses based on the original task context.
     """
     job_id = event.get("job_id")
     message = event.get("message", {})
     content = message.get("content", str(message))
-    
+
     print(f"[QUESTION] Job {job_id} requires input:")
     print(f"  {content}")
-    
+
     if not mcp_command:
         print("  (No MCP command configured - skipping response)", file=sys.stderr)
         return
-    
-    # In a real implementation, ZAI would analyze the question and
+
+    # In a real implementation, the local agent would analyze the question and
     # generate an appropriate response. For now, we just log it.
     # Example response:
     # run_mcp(mcp_command, "jules_send_message", {
     #     "job_id": job_id,
-    #     "message": {"content": "Response from ZAI..."}
+    #     "message": {"content": "Response from local agent..."}
     # })
 
 
@@ -115,18 +115,20 @@ def handle_completed(event: Dict[str, Any], mcp_command: List[str]) -> None:
     """
     job_id = event.get("job_id")
     status = event.get("status", "UNKNOWN")
-    
+
     print(f"[COMPLETED] Job {job_id} finished with status: {status}")
-    
+
     if not mcp_command:
-        print("  (No MCP command configured - skipping artifact fetch)", file=sys.stderr)
+        print(
+            "  (No MCP command configured - skipping artifact fetch)", file=sys.stderr
+        )
         return
-    
+
     # Fetch artifacts for review
     artifacts = run_mcp(mcp_command, "jules_get_artifacts", {"job_id": job_id})
     print(f"  Artifacts: {json.dumps(artifacts, indent=2)}")
-    
-    # In a real implementation, ZAI would:
+
+    # In a real implementation, the local agent would:
     # 1. Review the code changes
     # 2. Run tests if applicable
     # 3. Decide whether to merge or request changes
@@ -142,15 +144,15 @@ def handle_error(event: Dict[str, Any], mcp_command: List[str]) -> None:
     job_id = event.get("job_id")
     status = event.get("status", "UNKNOWN")
     message = event.get("message", "No error details available")
-    
+
     print(f"[ERROR] Job {job_id} failed with status: {status}")
     print(f"  Error: {message}")
-    
+
     if not mcp_command:
         print("  (No MCP command configured - skipping retry)", file=sys.stderr)
         return
-    
-    # In a real implementation, ZAI would analyze the error and
+
+    # In a real implementation, the local agent would analyze the error and
     # decide whether to retry, modify the prompt, or escalate.
     # Example retry:
     # run_mcp(mcp_command, "jules_request_retry", {"job_id": job_id})
@@ -164,19 +166,19 @@ def handle_stuck(event: Dict[str, Any], mcp_command: List[str]) -> None:
     """
     job_id = event.get("job_id")
     last_activity = event.get("last_activity", "unknown")
-    
+
     print(f"[STUCK] Job {job_id} appears stuck")
     print(f"  Last activity: {last_activity}")
-    
+
     if not mcp_command:
         print("  (No MCP command configured - skipping investigation)", file=sys.stderr)
         return
-    
+
     # Fetch current job state for investigation
     job_info = run_mcp(mcp_command, "jules_get_job", {"job_id": job_id})
     print(f"  Job info: {json.dumps(job_info, indent=2)}")
-    
-    # In a real implementation, ZAI would:
+
+    # In a real implementation, the local agent would:
     # 1. Analyze why the job is stuck
     # 2. Send a clarifying message
     # 3. Or cancel and restart with modified parameters
@@ -189,7 +191,7 @@ def main() -> int:
     event = load_event()
     config = load_config(DEFAULT_CONFIG_PATH)
     mcp_command = config.get("mcp_command", [])
-    
+
     # Ensure mcp_command is a list
     if isinstance(mcp_command, str):
         mcp_command = [mcp_command]
