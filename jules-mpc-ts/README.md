@@ -1,0 +1,144 @@
+# Jules Manager (TypeScript)
+
+An MCP server implementation for orchestrating Google Jules as a remote coding agent from a local coding agent. The system handles the full lifecycle: task decomposition, API-based dispatch to Jules, asynchronous status monitoring, intervention handling, code review, and PR merging.
+
+## Core Principle
+
+**The local agent must not waste context window tokens on active polling.** A decoupled monitoring mechanism handles polling independently and only triggers the local agent when human-level input or a final review is required.
+
+## Quick Start
+
+### Prerequisites
+
+- Node.js 20+
+- `JULES_API_TOKEN` environment variable set with your Jules API bearer token
+
+### Install Dependencies
+
+```bash
+npm install
+```
+
+### Start the System
+
+```bash
+# Terminal 1: Build the TypeScript MCP server
+npm run build
+
+# Terminal 2: Start the background monitor
+node scripts/jules_monitor.js --config config.json
+
+# Terminal 3: Start the event watcher
+node scripts/jules_event_watcher.js --command "node scripts/event_handler.js"
+```
+
+### Create a Job
+
+```bash
+# Use the MCP client to create a job
+npm run mcp-client -- \
+  --command node build/mcp-server/jules_mcp_server.js \
+  --tool jules_create_job \
+  --arguments '{"repo": "owner/repo", "branch": "feature/new-auth", "prompt": "Implement OAuth2 authentication"}'
+
+# Register the job for monitoring
+npm run mcp-client -- \
+  --command node build/mcp-server/jules_mcp_server.js \
+  --tool jules_register_job \
+  --arguments '{"job_id": "JOB_ID_FROM_ABOVE", "jobs_path": "jules-manager/jobs.jsonl"}'
+```
+
+## Project Structure
+
+```
+jules-manager/
+"o"?"? README.md                    # This file
+"o"?"? config.json                  # Shared configuration
+"o"?"? jobs.jsonl                   # Active jobs registry
+"o"?"? events.jsonl                 # Actionable event queue
+"o"?"? docs/
+"'   """?"? architecture.md          # Detailed architecture documentation
+"o"?"? mcp-server/
+"'   "o"?"? jules_mcp_server.ts      # MCP server implementation
+"'   """?"? README.md                # MCP server docs
+"o"?"? src/
+"'   "o"?"? mcp_client.ts            # CLI MCP client helper
+"o"?"? scripts/
+    "o"?"? jules_monitor.ts         # Background poller
+    "o"?"? jules_event_watcher.ts   # Event queue watcher
+    "o"?"? event_handler.ts         # Event handler
+```
+
+## File Descriptions
+
+| File | Purpose |
+|------|---------|
+| `config.json` | Shared configuration for paths, polling intervals, and API settings |
+| `jobs.jsonl` | Registry of active job IDs being monitored (one JSON object per line) |
+| `events.jsonl` | Queue of actionable events emitted by the monitor |
+| `mcp-server/jules_mcp_server.ts` | MCP server that wraps the Jules API with stdio JSON-RPC |
+| `scripts/jules_monitor.ts` | Background daemon that polls Jules API and emits events |
+| `scripts/jules_event_watcher.ts` | Tails events.jsonl and invokes handlers for new events |
+| `scripts/event_handler.ts` | Routes events to appropriate handlers based on type |
+| `src/mcp_client.ts` | CLI tool for calling MCP tools from the command line |
+
+## Environment Variables
+
+| Variable | Required | Description |
+|----------|----------|-------------|
+| `JULES_API_TOKEN` | Yes | Bearer token for Jules API authentication |
+| `JULES_API_BASE` | No | Base URL for Jules API (default: https://jules.googleapis.com/v1) |
+| `JULES_CONFIG` | No | Path to config.json (default: jules-manager/config.json) |
+
+## Event Types
+
+| Event | Trigger | Handler Action |
+|-------|---------|----------------|
+| `question` | Jules asks for clarification | Respond via `jules_send_message` |
+| `completed` | Job status = COMPLETED | Fetch artifacts, review code, merge PR |
+| `error` | Job status = FAILED/ERROR | Request retry via `jules_request_retry` |
+| `stuck` | No progress for N minutes | Investigate, potentially cancel/restart |
+
+## MCP Tools
+
+The MCP server exposes these tools:
+
+| Tool | Description |
+|------|-------------|
+| `jules_create_job` | Create a new Jules job |
+| `jules_register_job` | Register job ID with the monitor |
+| `jules_get_job` | Fetch job metadata and status |
+| `jules_get_messages` | Fetch messages since cursor |
+| `jules_send_message` | Send clarification to Jules |
+| `jules_get_artifacts` | Get diff/patch/PR URL |
+| `jules_request_retry` | Retry or re-run a job |
+| `jules_merge_pr` | Merge PR after CI passes |
+| `jules_cancel_job` | Cancel a running job |
+| `jules_list_jobs` | List all jobs for a repo |
+
+## Configuration
+
+See `config.json` for all available settings:
+
+```json
+{
+  "jobs_path": "jules-manager/jobs.jsonl",
+  "events_path": "jules-manager/events.jsonl",
+  "monitor_state_path": "jules-manager/.monitor_state.json",
+  "watcher_state_path": "jules-manager/.watcher_state.json",
+  "monitor_poll_seconds": 45,
+  "watcher_poll_seconds": 1,
+  "stuck_minutes": 20,
+  "api_base": "https://jules.googleapis.com/v1",
+  "mcp_command": ["node", "jules-manager/build/mcp-server/jules_mcp_server.js"],
+  "event_command": ["node", "jules-manager/scripts/event_handler.js"]
+}
+```
+
+## Architecture
+
+For detailed architecture documentation, see [docs/architecture.md](docs/architecture.md).
+
+## Dependencies
+
+This project uses the TypeScript MCP SDK (`@modelcontextprotocol/sdk`) and Zod for schemas. The monitoring scripts are plain Node.js and do not require additional packages.

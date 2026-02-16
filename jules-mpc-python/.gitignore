@@ -1,0 +1,7 @@
+__pycache__/
+*.pyc
+.venv/
+.monitor_state.json
+.watcher_state.json
+events.jsonl
+jobs.jsonl
