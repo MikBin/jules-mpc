@@ -4,11 +4,11 @@ import { z } from "zod";
 import { fileURLToPath } from "url";
 
 const SERVER_NAME = "jules-mcp";
-const SERVER_VERSION = "1.0.0";
+const SERVER_VERSION = "2.0.0";
 
-export const DEFAULT_API_BASE = "https://jules.googleapis.com/v1";
+export const DEFAULT_API_BASE = "https://jules.googleapis.com/v1alpha";
 export const API_BASE = process.env.JULES_API_BASE ?? DEFAULT_API_BASE;
-export const API_TOKEN = process.env.JULES_API_TOKEN;
+export const API_KEY = process.env.JULES_API_KEY;
 
 type JsonRecord = Record<string, unknown>;
 type StructuredContent = Record<string, unknown> | undefined;
@@ -18,11 +18,11 @@ type ToolResponse = {
 };
 
 export function buildHeaders(): HeadersInit {
-  const headers: HeadersInit = {
+  const headers: Record<string, string> = {
     Accept: "application/json",
   };
-  if (API_TOKEN) {
-    (headers as Record<string, string>).Authorization = `Bearer ${API_TOKEN}`;
+  if (API_KEY) {
+    headers["x-goog-api-key"] = API_KEY;
   }
   return headers;
 }
@@ -57,55 +57,91 @@ export function urlJoin(path: string): string {
   return `${API_BASE.replace(/\/$/, "")}/${normalized}`;
 }
 
-export async function createJob(payload: JsonRecord): Promise<unknown> {
-  return requestJson(urlJoin("jobs"), {
+// --- API helpers ---
+
+export async function createSession(payload: JsonRecord): Promise<unknown> {
+  return requestJson(urlJoin("sessions"), {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(payload),
   });
 }
 
-export async function getJob(jobId: string): Promise<unknown> {
-  return requestJson(urlJoin(`jobs/${jobId}`));
+export async function getSession(sessionId: string): Promise<unknown> {
+  return requestJson(urlJoin(`sessions/${sessionId}`));
 }
 
-export async function getMessages(jobId: string, cursor?: string): Promise<unknown> {
-  const query = cursor ? `?cursor=${encodeURIComponent(cursor)}` : "";
-  return requestJson(urlJoin(`jobs/${jobId}/messages${query}`));
+export async function listSessions(
+  pageSize?: number,
+  pageToken?: string
+): Promise<unknown> {
+  const params = new URLSearchParams();
+  if (pageSize !== undefined) params.set("pageSize", String(pageSize));
+  if (pageToken) params.set("pageToken", pageToken);
+  const query = params.toString() ? `?${params.toString()}` : "";
+  return requestJson(urlJoin(`sessions${query}`));
 }
 
-export async function sendMessage(jobId: string, message: JsonRecord): Promise<unknown> {
-  return requestJson(urlJoin(`jobs/${jobId}/messages`), {
+export async function deleteSession(sessionId: string): Promise<unknown> {
+  return requestJson(urlJoin(`sessions/${sessionId}`), { method: "DELETE" });
+}
+
+export async function sendMessage(
+  sessionId: string,
+  prompt: string
+): Promise<unknown> {
+  return requestJson(urlJoin(`sessions/${sessionId}:sendMessage`), {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(message),
+    body: JSON.stringify({ prompt }),
   });
 }
 
-export async function getArtifacts(jobId: string): Promise<unknown> {
-  return requestJson(urlJoin(`jobs/${jobId}/artifacts`));
-}
-
-export async function requestRetry(jobId: string): Promise<unknown> {
-  return requestJson(urlJoin(`jobs/${jobId}:retry`), { method: "POST" });
-}
-
-export async function mergePr(jobId: string, payload: JsonRecord): Promise<unknown> {
-  return requestJson(urlJoin(`jobs/${jobId}:merge`), {
+export async function approvePlan(sessionId: string): Promise<unknown> {
+  return requestJson(urlJoin(`sessions/${sessionId}:approvePlan`), {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(payload),
+    body: JSON.stringify({}),
   });
 }
 
-export async function cancelJob(jobId: string): Promise<unknown> {
-  return requestJson(urlJoin(`jobs/${jobId}:cancel`), { method: "POST" });
+export async function listActivities(
+  sessionId: string,
+  pageSize?: number,
+  pageToken?: string
+): Promise<unknown> {
+  const params = new URLSearchParams();
+  if (pageSize !== undefined) params.set("pageSize", String(pageSize));
+  if (pageToken) params.set("pageToken", pageToken);
+  const query = params.toString() ? `?${params.toString()}` : "";
+  return requestJson(urlJoin(`sessions/${sessionId}/activities${query}`));
 }
 
-export async function listJobs(repo: string, limit: number): Promise<unknown> {
-  const query = `?repo=${encodeURIComponent(repo)}&limit=${limit}`;
-  return requestJson(urlJoin(`jobs${query}`));
+export async function getActivity(
+  sessionId: string,
+  activityId: string
+): Promise<unknown> {
+  return requestJson(
+    urlJoin(`sessions/${sessionId}/activities/${activityId}`)
+  );
 }
+
+export async function listSources(
+  pageSize?: number,
+  pageToken?: string
+): Promise<unknown> {
+  const params = new URLSearchParams();
+  if (pageSize !== undefined) params.set("pageSize", String(pageSize));
+  if (pageToken) params.set("pageToken", pageToken);
+  const query = params.toString() ? `?${params.toString()}` : "";
+  return requestJson(urlJoin(`sources${query}`));
+}
+
+export async function getSource(sourceId: string): Promise<unknown> {
+  return requestJson(urlJoin(`sources/${sourceId}`));
+}
+
+// --- Response helpers ---
 
 function toStructuredContent(payload: unknown): StructuredContent {
   if (payload && typeof payload === "object" && !Array.isArray(payload)) {
@@ -125,80 +161,94 @@ function buildToolResponse(payload: unknown): ToolResponse {
   };
 }
 
+// --- MCP Server ---
+
 export const server = new McpServer({
   name: SERVER_NAME,
   version: SERVER_VERSION,
 });
 
 server.registerTool(
-  "jules_create_job",
+  "jules_create_session",
   {
-    title: "Create a new Jules job",
-    description: "Create a new Jules job",
+    title: "Create a new Jules session",
+    description:
+      "Create a new Jules coding session for a GitHub repository",
     inputSchema: {
-      repo: z.string().describe("Repository in owner/repo format"),
-      branch: z.string().describe("Target branch name"),
+      owner: z.string().describe("GitHub repository owner"),
+      repo: z.string().describe("GitHub repository name"),
+      branch: z.string().describe("Starting branch name"),
       prompt: z.string().describe("Task description for Jules"),
-      constraints: z.record(z.any()).optional().describe("Optional constraints"),
+      title: z.string().optional().describe("Optional session title"),
+      requirePlanApproval: z
+        .boolean()
+        .optional()
+        .describe("Whether to require plan approval before execution"),
+      automationMode: z
+        .string()
+        .optional()
+        .describe('Automation mode, e.g. "AUTO_CREATE_PR"'),
     },
   },
-  async (arguments_) => {
-    const payload = await createJob(arguments_ as JsonRecord);
+  async ({ owner, repo, branch, prompt, title, requirePlanApproval, automationMode }) => {
+    const body: JsonRecord = {
+      prompt,
+      sourceContext: {
+        source: `sources/github/${owner}/${repo}`,
+        githubRepoContext: { startingBranch: branch },
+      },
+    };
+    if (title !== undefined) body.title = title;
+    if (requirePlanApproval !== undefined)
+      body.requirePlanApproval = requirePlanApproval;
+    if (automationMode !== undefined) body.automationMode = automationMode;
+    const payload = await createSession(body);
     return buildToolResponse(payload);
   }
 );
 
 server.registerTool(
-  "jules_register_job",
+  "jules_get_session",
   {
-    title: "Register a job ID with the local monitor",
-    description: "Register a job ID with the local monitor jobs file for tracking",
+    title: "Get session details",
+    description: "Fetch session metadata, state, and outputs",
     inputSchema: {
-      job_id: z.string().describe("The Jules job ID to register"),
-      jobs_path: z.string().describe("Path to the jobs JSONL file"),
-      metadata: z.record(z.any()).optional().describe("Optional metadata"),
+      session_id: z.string().describe("The Jules session ID"),
     },
   },
-  async ({ job_id, jobs_path, metadata }) => {
-    if (!job_id || !jobs_path) {
-      throw new Error("job_id and jobs_path are required");
-    }
-    const { promises: fs } = await import("fs");
-    const { dirname } = await import("path");
-    const entry = { job_id, metadata: metadata ?? {} };
-    await fs.mkdir(dirname(jobs_path), { recursive: true });
-    await fs.appendFile(jobs_path, `${JSON.stringify(entry)}\n`, "utf8");
-    return buildToolResponse({ registered: true, job_id });
-  }
-);
-
-server.registerTool(
-  "jules_get_job",
-  {
-    title: "Fetch job metadata and current status",
-    description: "Fetch job metadata and current status",
-    inputSchema: {
-      job_id: z.string().describe("The Jules job ID"),
-    },
-  },
-  async ({ job_id }) => {
-    const payload = await getJob(job_id);
+  async ({ session_id }) => {
+    const payload = await getSession(session_id);
     return buildToolResponse(payload);
   }
 );
 
 server.registerTool(
-  "jules_get_messages",
+  "jules_list_sessions",
   {
-    title: "Fetch new job messages",
-    description: "Fetch new job messages since a cursor position",
+    title: "List sessions",
+    description: "List Jules sessions",
     inputSchema: {
-      job_id: z.string().describe("The Jules job ID"),
-      cursor: z.string().optional().describe("Optional cursor for pagination"),
+      pageSize: z.number().optional().describe("Maximum number of sessions to return"),
+      pageToken: z.string().optional().describe("Page token for pagination"),
     },
   },
-  async ({ job_id, cursor }) => {
-    const payload = await getMessages(job_id, cursor);
+  async ({ pageSize, pageToken }) => {
+    const payload = await listSessions(pageSize, pageToken);
+    return buildToolResponse(payload);
+  }
+);
+
+server.registerTool(
+  "jules_delete_session",
+  {
+    title: "Delete a session",
+    description: "Delete a Jules session",
+    inputSchema: {
+      session_id: z.string().describe("The Jules session ID"),
+    },
+  },
+  async ({ session_id }) => {
+    const payload = await deleteSession(session_id);
     return buildToolResponse(payload);
   }
 );
@@ -206,92 +256,94 @@ server.registerTool(
 server.registerTool(
   "jules_send_message",
   {
-    title: "Send clarification to Jules",
-    description: "Send a clarification or instruction to Jules for a job",
+    title: "Send message to session",
+    description: "Send a clarification or instruction to a Jules session",
     inputSchema: {
-      job_id: z.string().describe("The Jules job ID"),
-      message: z.record(z.any()).describe("Message content to send"),
+      session_id: z.string().describe("The Jules session ID"),
+      message: z.string().describe("Message text to send"),
     },
   },
-  async ({ job_id, message }) => {
-    const payload = await sendMessage(job_id, message as JsonRecord);
+  async ({ session_id, message }) => {
+    const payload = await sendMessage(session_id, message);
     return buildToolResponse(payload);
   }
 );
 
 server.registerTool(
-  "jules_get_artifacts",
+  "jules_approve_plan",
   {
-    title: "Fetch job artifacts",
-    description: "Fetch job artifacts (diff, patch, PR URL)",
+    title: "Approve session plan",
+    description: "Approve the plan for a session awaiting plan approval",
     inputSchema: {
-      job_id: z.string().describe("The Jules job ID"),
+      session_id: z.string().describe("The Jules session ID"),
     },
   },
-  async ({ job_id }) => {
-    const payload = await getArtifacts(job_id);
+  async ({ session_id }) => {
+    const payload = await approvePlan(session_id);
     return buildToolResponse(payload);
   }
 );
 
 server.registerTool(
-  "jules_request_retry",
+  "jules_list_activities",
   {
-    title: "Request a retry",
-    description: "Request a retry or re-run of a failed job",
+    title: "List session activities",
+    description: "List activities for a Jules session",
     inputSchema: {
-      job_id: z.string().describe("The Jules job ID"),
+      session_id: z.string().describe("The Jules session ID"),
+      pageSize: z.number().optional().describe("Maximum number of activities to return"),
+      pageToken: z.string().optional().describe("Page token for pagination"),
     },
   },
-  async ({ job_id }) => {
-    const payload = await requestRetry(job_id);
+  async ({ session_id, pageSize, pageToken }) => {
+    const payload = await listActivities(session_id, pageSize, pageToken);
     return buildToolResponse(payload);
   }
 );
 
 server.registerTool(
-  "jules_merge_pr",
+  "jules_get_activity",
   {
-    title: "Merge the PR",
-    description: "Merge the PR associated with a completed job",
+    title: "Get a single activity",
+    description: "Get a single activity by ID for a Jules session",
     inputSchema: {
-      job_id: z.string().describe("The Jules job ID"),
-      payload: z.record(z.any()).optional().describe("Optional merge parameters"),
+      session_id: z.string().describe("The Jules session ID"),
+      activity_id: z.string().describe("The activity ID"),
     },
   },
-  async ({ job_id, payload }) => {
-    const result = await mergePr(job_id, (payload ?? {}) as JsonRecord);
-    return buildToolResponse(result);
-  }
-);
-
-server.registerTool(
-  "jules_cancel_job",
-  {
-    title: "Cancel a running job",
-    description: "Cancel a running job",
-    inputSchema: {
-      job_id: z.string().describe("The Jules job ID"),
-    },
-  },
-  async ({ job_id }) => {
-    const payload = await cancelJob(job_id);
+  async ({ session_id, activity_id }) => {
+    const payload = await getActivity(session_id, activity_id);
     return buildToolResponse(payload);
   }
 );
 
 server.registerTool(
-  "jules_list_jobs",
+  "jules_list_sources",
   {
-    title: "List jobs",
-    description: "List all jobs for a repository",
+    title: "List sources",
+    description: "List available sources (GitHub repositories)",
     inputSchema: {
-      repo: z.string().describe("Repository in owner/repo format"),
-      limit: z.number().optional().describe("Maximum number of jobs to return"),
+      pageSize: z.number().optional().describe("Maximum number of sources to return"),
+      pageToken: z.string().optional().describe("Page token for pagination"),
     },
   },
-  async ({ repo, limit }) => {
-    const payload = await listJobs(repo, limit ?? 50);
+  async ({ pageSize, pageToken }) => {
+    const payload = await listSources(pageSize, pageToken);
+    return buildToolResponse(payload);
+  }
+);
+
+server.registerTool(
+  "jules_get_source",
+  {
+    title: "Get source details",
+    description: "Get details for a specific source",
+    inputSchema: {
+      source_id: z.string().describe("The source ID"),
+    },
+  },
+  async ({ source_id }) => {
+    const payload = await getSource(source_id);
     return buildToolResponse(payload);
   }
 );

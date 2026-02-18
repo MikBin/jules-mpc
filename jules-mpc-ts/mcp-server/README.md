@@ -4,7 +4,7 @@ A minimal MCP (Model Context Protocol) server that wraps the Google Jules API ov
 
 ## Overview
 
-This server implements the MCP protocol for interacting with Google Jules, an AI-powered code assistant. It exposes tools for creating, monitoring, and managing Jules jobs through a JSON-RPC interface over stdin/stdout.
+This server implements the MCP protocol for interacting with Google Jules, an AI-powered code assistant. It exposes tools for creating, monitoring, and managing Jules sessions through a JSON-RPC interface over stdin/stdout.
 
 ## Server Identity
 
@@ -19,7 +19,7 @@ This server implements the MCP protocol for interacting with Google Jules, an AI
 
 ```bash
 # Set required environment variable
-export JULES_API_TOKEN="your-bearer-token"
+export JULES_API_KEY="your-api-key"
 
 # Build and run the server
 npm run build
@@ -32,8 +32,8 @@ node build/mcp-server/jules_mcp_server.js
 # Use the provided MCP client
 npm run mcp-client -- \
   --command node build/mcp-server/jules_mcp_server.js \
-  --tool jules_get_job \
-  --arguments '{"job_id": "abc123"}'
+  --tool jules_get_session \
+  --arguments '{"session_id": "abc123"}'
 ```
 
 ### JSON-RPC Protocol
@@ -73,8 +73,8 @@ Response:
   "id": 3,
   "method": "tools/call",
   "params": {
-    "name": "jules_get_job",
-    "arguments": {"job_id": "abc123"}
+    "name": "jules_get_session",
+    "arguments": {"session_id": "abc123"}
   }
 }
 ```
@@ -83,23 +83,23 @@ Response:
 
 | Tool | Description | Required Parameters |
 |------|-------------|---------------------|
-| `jules_create_job` | Create a new Jules job | repo, branch, prompt |
-| `jules_register_job` | Register job ID with monitor | job_id, jobs_path |
-| `jules_get_job` | Fetch job metadata and status | job_id |
-| `jules_get_messages` | Fetch messages since cursor | job_id |
-| `jules_send_message` | Send clarification to Jules | job_id, message |
-| `jules_get_artifacts` | Get diff/patch/PR URL | job_id |
-| `jules_request_retry` | Retry or re-run a job | job_id |
-| `jules_merge_pr` | Merge PR after CI passes | job_id |
-| `jules_cancel_job` | Cancel a running job | job_id |
-| `jules_list_jobs` | List all jobs for a repo | repo |
+| `jules_create_session` | Create a new Jules session | owner, repo, branch, prompt |
+| `jules_get_session` | Fetch session metadata and status | session_id |
+| `jules_list_sessions` | List all sessions | (none required) |
+| `jules_delete_session` | Delete a session | session_id |
+| `jules_send_message` | Send a message to Jules | session_id, message |
+| `jules_approve_plan` | Approve a pending plan | session_id |
+| `jules_list_activities` | List session activities | session_id |
+| `jules_get_activity` | Get a single activity | session_id, activity_id |
+| `jules_list_sources` | List connected repositories | (none required) |
+| `jules_get_source` | Get source details | source_id |
 
 ## Environment Variables
 
 | Variable | Required | Description |
 |----------|----------|-------------|
-| `JULES_API_TOKEN` | Yes | Bearer token for Jules API authentication |
-| `JULES_API_BASE` | No | Base URL for Jules API (default: https://jules.googleapis.com/v1) |
+| `JULES_API_KEY` | Yes | API key from jules.google.com/settings |
+| `JULES_API_BASE` | No | Base URL for Jules API (default: https://jules.googleapis.com/v1alpha) |
 
 ## Dependencies
 
@@ -118,7 +118,7 @@ Errors are returned as JSON-RPC error responses:
   "id": 1,
   "error": {
     "code": -32000,
-    "message": "HTTP 404 for https://jules.googleapis.com/v1/jobs/invalid: Not found"
+    "message": "HTTP 404 for https://jules.googleapis.com/v1alpha/sessions/invalid: Not found"
   }
 }
 ```

@@ -2,15 +2,16 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import {
   buildHeaders,
   urlJoin,
-  createJob,
-  getJob,
-  getMessages,
+  createSession,
+  getSession,
+  listSessions,
+  deleteSession,
   sendMessage,
-  getArtifacts,
-  requestRetry,
-  mergePr,
-  cancelJob,
-  listJobs,
+  approvePlan,
+  listActivities,
+  getActivity,
+  listSources,
+  getSource,
   API_BASE,
   DEFAULT_API_BASE
 } from '../mcp-server/jules_mcp_server.js';
@@ -33,22 +34,17 @@ describe('jules_mcp_server', () => {
       const headers = buildHeaders();
       expect(headers).toHaveProperty('Accept', 'application/json');
     });
-
-    // Note: API_TOKEN is read at module load time, so we can't easily toggle it here
-    // without re-importing the module. We assume it captures whatever was in env
-    // or undefined.
   });
 
   describe('urlJoin', () => {
     it('should join base URL and path', () => {
-      // API_BASE might differ based on env, but we check logic relative to it
-      const base = API_BASE.replace(/\/$/, "");
-      expect(urlJoin('jobs')).toBe(`${base}/jobs`);
+      const base = API_BASE.replace(/\/$/, '');
+      expect(urlJoin('sessions')).toBe(`${base}/sessions`);
     });
 
     it('should handle leading slash in path', () => {
-      const base = API_BASE.replace(/\/$/, "");
-      expect(urlJoin('/jobs')).toBe(`${base}/jobs`);
+      const base = API_BASE.replace(/\/$/, '');
+      expect(urlJoin('/sessions')).toBe(`${base}/sessions`);
     });
   });
 
@@ -57,137 +53,178 @@ describe('jules_mcp_server', () => {
       fetchMock.mockResolvedValue({
         ok,
         status,
-        text: async () => data ? JSON.stringify(data) : '',
+        text: async () => (data !== null ? JSON.stringify(data) : ''),
       });
     };
 
-    it('createJob should POST to /jobs', async () => {
-      mockResponse({ id: 'job-123' });
-      const payload = { repo: 'owner/repo', prompt: 'do it' };
+    it('createSession should POST to /sessions', async () => {
+      mockResponse({ name: 'sessions/s-123' });
+      const payload = { prompt: 'do it', sourceContext: {} };
 
-      const result = await createJob(payload);
+      const result = await createSession(payload);
 
       expect(fetchMock).toHaveBeenCalledWith(
-        expect.stringMatching(/\/jobs$/),
+        expect.stringMatching(/\/sessions$/),
         expect.objectContaining({
           method: 'POST',
           headers: expect.objectContaining({ 'Content-Type': 'application/json' }),
-          body: JSON.stringify(payload)
+          body: JSON.stringify(payload),
         })
       );
-      expect(result).toEqual({ id: 'job-123' });
+      expect(result).toEqual({ name: 'sessions/s-123' });
     });
 
-    it('getJob should GET /jobs/:id', async () => {
-      mockResponse({ id: 'job-123', status: 'PENDING' });
+    it('getSession should GET /sessions/{id}', async () => {
+      mockResponse({ name: 'sessions/s-123', state: 'RUNNING' });
 
-      const result = await getJob('job-123');
+      const result = await getSession('s-123');
 
       expect(fetchMock).toHaveBeenCalledWith(
-        expect.stringMatching(/\/jobs\/job-123$/),
+        expect.stringMatching(/\/sessions\/s-123$/),
         expect.any(Object)
       );
-      expect(result).toEqual({ id: 'job-123', status: 'PENDING' });
+      expect(result).toEqual({ name: 'sessions/s-123', state: 'RUNNING' });
     });
 
-    it('getMessages should GET /jobs/:id/messages', async () => {
-      mockResponse({ messages: [] });
+    it('listSessions should GET /sessions with query params', async () => {
+      mockResponse({ sessions: [] });
 
-      await getMessages('job-123');
+      await listSessions(10, 'tok-abc');
 
       expect(fetchMock).toHaveBeenCalledWith(
-        expect.stringMatching(/\/jobs\/job-123\/messages$/),
+        expect.stringContaining('pageSize=10'),
         expect.any(Object)
       );
-    });
-
-    it('getMessages should append cursor if provided', async () => {
-      mockResponse({ messages: [] });
-
-      await getMessages('job-123', 'next-page');
-
       expect(fetchMock).toHaveBeenCalledWith(
-        expect.stringMatching(/\/jobs\/job-123\/messages\?cursor=next-page$/),
+        expect.stringContaining('pageToken=tok-abc'),
         expect.any(Object)
       );
     });
 
-    it('sendMessage should POST to /jobs/:id/messages', async () => {
-      mockResponse({ id: 'msg-1' });
-      const message = { role: 'user', content: 'hello' };
+    it('listSessions should GET /sessions without query params when omitted', async () => {
+      mockResponse({ sessions: [] });
 
-      await sendMessage('job-123', message);
+      await listSessions();
 
       expect(fetchMock).toHaveBeenCalledWith(
-        expect.stringMatching(/\/jobs\/job-123\/messages$/),
+        expect.stringMatching(/\/sessions$/),
+        expect.any(Object)
+      );
+    });
+
+    it('deleteSession should DELETE /sessions/{id}', async () => {
+      mockResponse(null, true, 204);
+
+      await deleteSession('s-123');
+
+      expect(fetchMock).toHaveBeenCalledWith(
+        expect.stringMatching(/\/sessions\/s-123$/),
+        expect.objectContaining({ method: 'DELETE' })
+      );
+    });
+
+    it('sendMessage should POST to /sessions/{id}:sendMessage with { prompt } body', async () => {
+      mockResponse({ name: 'sessions/s-123/activities/a-1' });
+
+      await sendMessage('s-123', 'hello');
+
+      expect(fetchMock).toHaveBeenCalledWith(
+        expect.stringMatching(/\/sessions\/s-123:sendMessage$/),
         expect.objectContaining({
           method: 'POST',
-          body: JSON.stringify(message)
+          body: JSON.stringify({ prompt: 'hello' }),
         })
       );
     });
 
-    it('getArtifacts should GET /jobs/:id/artifacts', async () => {
-      mockResponse({ files: [] });
+    it('approvePlan should POST to /sessions/{id}:approvePlan', async () => {
+      mockResponse({ name: 'sessions/s-123' });
 
-      await getArtifacts('job-123');
-
-      expect(fetchMock).toHaveBeenCalledWith(
-        expect.stringMatching(/\/jobs\/job-123\/artifacts$/),
-        expect.any(Object)
-      );
-    });
-
-    it('requestRetry should POST to /jobs/:id:retry', async () => {
-      mockResponse({ status: 'RETRYING' });
-
-      await requestRetry('job-123');
+      await approvePlan('s-123');
 
       expect(fetchMock).toHaveBeenCalledWith(
-        expect.stringMatching(/\/jobs\/job-123:retry$/),
-        expect.objectContaining({ method: 'POST' })
-      );
-    });
-
-    it('mergePr should POST to /jobs/:id:merge', async () => {
-      mockResponse({ merged: true });
-      const payload = { strategy: 'squash' };
-
-      await mergePr('job-123', payload);
-
-      expect(fetchMock).toHaveBeenCalledWith(
-        expect.stringMatching(/\/jobs\/job-123:merge$/),
+        expect.stringMatching(/\/sessions\/s-123:approvePlan$/),
         expect.objectContaining({
           method: 'POST',
-          body: JSON.stringify(payload)
+          body: JSON.stringify({}),
         })
       );
     });
 
-    it('cancelJob should POST to /jobs/:id:cancel', async () => {
-      mockResponse({ status: 'CANCELLED' });
+    it('listActivities should GET /sessions/{id}/activities', async () => {
+      mockResponse({ activities: [] });
 
-      await cancelJob('job-123');
+      await listActivities('s-123');
 
       expect(fetchMock).toHaveBeenCalledWith(
-        expect.stringMatching(/\/jobs\/job-123:cancel$/),
-        expect.objectContaining({ method: 'POST' })
+        expect.stringMatching(/\/sessions\/s-123\/activities$/),
+        expect.any(Object)
       );
     });
 
-    it('listJobs should GET /jobs with query params', async () => {
-      mockResponse({ jobs: [] });
+    it('listActivities should pass pageSize and pageToken query params', async () => {
+      mockResponse({ activities: [] });
 
-      await listJobs('owner/repo', 10);
+      await listActivities('s-123', 5, 'page2');
 
       expect(fetchMock).toHaveBeenCalledWith(
-        expect.stringContaining('repo=owner%2Frepo'),
+        expect.stringContaining('pageSize=5'),
         expect.any(Object)
       );
       expect(fetchMock).toHaveBeenCalledWith(
-        expect.stringContaining('limit=10'),
+        expect.stringContaining('pageToken=page2'),
         expect.any(Object)
       );
+    });
+
+    it('getActivity should GET /sessions/{id}/activities/{activityId}', async () => {
+      mockResponse({ name: 'sessions/s-123/activities/a-1' });
+
+      const result = await getActivity('s-123', 'a-1');
+
+      expect(fetchMock).toHaveBeenCalledWith(
+        expect.stringMatching(/\/sessions\/s-123\/activities\/a-1$/),
+        expect.any(Object)
+      );
+      expect(result).toEqual({ name: 'sessions/s-123/activities/a-1' });
+    });
+
+    it('listSources should GET /sources', async () => {
+      mockResponse({ sources: [] });
+
+      await listSources();
+
+      expect(fetchMock).toHaveBeenCalledWith(
+        expect.stringMatching(/\/sources$/),
+        expect.any(Object)
+      );
+    });
+
+    it('listSources should pass pageSize and pageToken query params', async () => {
+      mockResponse({ sources: [] });
+
+      await listSources(10, 'tok-xyz');
+
+      expect(fetchMock).toHaveBeenCalledWith(
+        expect.stringContaining('pageSize=10'),
+        expect.any(Object)
+      );
+      expect(fetchMock).toHaveBeenCalledWith(
+        expect.stringContaining('pageToken=tok-xyz'),
+        expect.any(Object)
+      );
+    });
+
+    it('getSource should GET /sources/{id}', async () => {
+      mockResponse({ name: 'sources/src-1' });
+
+      const result = await getSource('src-1');
+
+      expect(fetchMock).toHaveBeenCalledWith(
+        expect.stringMatching(/\/sources\/src-1$/),
+        expect.any(Object)
+      );
+      expect(result).toEqual({ name: 'sources/src-1' });
     });
 
     it('should throw error on non-ok response', async () => {
@@ -197,7 +234,7 @@ describe('jules_mcp_server', () => {
         text: async () => 'Not Found',
       });
 
-      await expect(getJob('invalid-id')).rejects.toThrow('HTTP 404');
+      await expect(getSession('invalid-id')).rejects.toThrow('HTTP 404');
     });
   });
 });

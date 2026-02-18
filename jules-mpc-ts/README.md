@@ -11,7 +11,7 @@ An MCP server implementation for orchestrating Google Jules as a remote coding a
 ### Prerequisites
 
 - Node.js 20+
-- `JULES_API_TOKEN` environment variable set with your Jules API bearer token
+- `JULES_API_KEY` environment variable set with your Jules API key
 
 ### Install Dependencies
 
@@ -86,17 +86,17 @@ jules-manager/
 
 | Variable | Required | Description |
 |----------|----------|-------------|
-| `JULES_API_TOKEN` | Yes | Bearer token for Jules API authentication |
-| `JULES_API_BASE` | No | Base URL for Jules API (default: https://jules.googleapis.com/v1) |
+| `JULES_API_KEY` | Yes | API key for Jules API authentication (from jules.google.com/settings) |
+| `JULES_API_BASE` | No | Base URL for Jules API (default: https://jules.googleapis.com/v1alpha) |
 | `JULES_CONFIG` | No | Path to config.json (default: jules-manager/config.json) |
 
 ## Event Types
 
 | Event | Trigger | Handler Action |
 |-------|---------|----------------|
-| `question` | Jules asks for clarification | Respond via `jules_send_message` |
-| `completed` | Job status = COMPLETED | Fetch artifacts, review code, merge PR |
-| `error` | Job status = FAILED/ERROR | Request retry via `jules_request_retry` |
+| `question` | Session state = AWAITING_USER_FEEDBACK | Respond via `jules_send_message` |
+| `completed` | Session state = COMPLETED | Fetch artifacts, review code, merge PR |
+| `error` | Session state = FAILED | Investigate and recreate session |
 | `stuck` | No progress for N minutes | Investigate, potentially cancel/restart |
 
 ## MCP Tools
@@ -105,16 +105,16 @@ The MCP server exposes these tools:
 
 | Tool | Description |
 |------|-------------|
-| `jules_create_job` | Create a new Jules job |
-| `jules_register_job` | Register job ID with the monitor |
-| `jules_get_job` | Fetch job metadata and status |
-| `jules_get_messages` | Fetch messages since cursor |
-| `jules_send_message` | Send clarification to Jules |
-| `jules_get_artifacts` | Get diff/patch/PR URL |
-| `jules_request_retry` | Retry or re-run a job |
-| `jules_merge_pr` | Merge PR after CI passes |
-| `jules_cancel_job` | Cancel a running job |
-| `jules_list_jobs` | List all jobs for a repo |
+| `jules_create_session` | Create a new Jules session |
+| `jules_get_session` | Fetch session metadata and status |
+| `jules_list_sessions` | List all sessions |
+| `jules_delete_session` | Delete a session |
+| `jules_send_message` | Send a message to Jules |
+| `jules_approve_plan` | Approve a pending plan |
+| `jules_list_activities` | List session activities |
+| `jules_get_activity` | Get a single activity |
+| `jules_list_sources` | List connected repositories |
+| `jules_get_source` | Get source details |
 
 ## Configuration
 
@@ -129,7 +129,7 @@ See `config.json` for all available settings:
   "monitor_poll_seconds": 45,
   "watcher_poll_seconds": 1,
   "stuck_minutes": 20,
-  "api_base": "https://jules.googleapis.com/v1",
+  "api_base": "https://jules.googleapis.com/v1alpha",
   "mcp_command": ["node", "jules-manager/build/mcp-server/jules_mcp_server.js"],
   "event_command": ["node", "jules-manager/scripts/event_handler.js"]
 }
@@ -141,7 +141,7 @@ After building the project (`npm run build`), you can use the Jules MCP server w
 
 > **Prerequisites**
 > - Run `npm run build` in the `jules-mpc-ts` directory
-> - Have your `JULES_API_TOKEN` ready
+> - Have your `JULES_API_KEY` ready
 
 ---
 
@@ -156,7 +156,7 @@ In the Amp settings MCP tab, fill in:
 | **Command** | `node` |
 | **Args** | `build/mcp-server/jules_mcp_server.js` |
 | **Cwd** | `/path/to/jules-mpc-ts` |
-| **Env** | `JULES_API_TOKEN` = `<your-token>` |
+| **Env** | `JULES_API_KEY` = `<your-token>` |
 
 Or add to `.ampcoderc` / VS Code settings (`amp.mcpServers`):
 
@@ -168,7 +168,7 @@ Or add to `.ampcoderc` / VS Code settings (`amp.mcpServers`):
       "args": ["build/mcp-server/jules_mcp_server.js"],
       "cwd": "/path/to/jules-mpc-ts",
       "env": {
-        "JULES_API_TOKEN": "<your-token>"
+        "JULES_API_KEY": "<your-token>"
       }
     }
   }
@@ -188,7 +188,7 @@ Add to your `cline_mcp_settings.json` or via the Cline MCP settings UI:
       "command": "node",
       "args": ["/absolute/path/to/jules-mpc-ts/build/mcp-server/jules_mcp_server.js"],
       "env": {
-        "JULES_API_TOKEN": "<your-token>"
+        "JULES_API_KEY": "<your-token>"
       }
     }
   }
@@ -208,7 +208,7 @@ Add to `kilo_mcp_settings.json` or via the Kilo Code MCP settings UI:
       "command": "node",
       "args": ["/absolute/path/to/jules-mpc-ts/build/mcp-server/jules_mcp_server.js"],
       "env": {
-        "JULES_API_TOKEN": "<your-token>"
+        "JULES_API_KEY": "<your-token>"
       }
     }
   }
@@ -228,7 +228,7 @@ Add to `~/.codeium/windsurf/mcp_config.json`:
       "command": "node",
       "args": ["/absolute/path/to/jules-mpc-ts/build/mcp-server/jules_mcp_server.js"],
       "env": {
-        "JULES_API_TOKEN": "<your-token>"
+        "JULES_API_KEY": "<your-token>"
       }
     }
   }

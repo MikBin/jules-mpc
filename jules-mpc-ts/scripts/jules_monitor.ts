@@ -2,13 +2,13 @@ import { promises as fs } from "fs";
 import { dirname } from "path";
 import { fileURLToPath } from "url";
 
-const DEFAULT_API_BASE = "https://jules.googleapis.com/v1";
+const DEFAULT_API_BASE = "https://jules.googleapis.com/v1alpha";
 const DEFAULT_POLL_SECONDS = 45;
 const DEFAULT_STUCK_MINUTES = 20;
 const DEFAULT_STATE_PATH = ".monitor_state.json";
 const DEFAULT_CONFIG_PATH = process.env.JULES_CONFIG ?? "jules-manager/config.json";
 
-const ACTIONABLE_STATUSES = new Set(["COMPLETED", "FAILED", "ERROR", "CANCELLED"]);
+const ACTIONABLE_STATUSES = new Set(["COMPLETED", "FAILED"]);
 
 type JsonRecord = Record<string, unknown>;
 
@@ -58,14 +58,14 @@ async function loadJobs(path: string): Promise<JsonRecord[]> {
     if (trimmed.startsWith("[")) {
       const jobs = JSON.parse(trimmed) as JsonRecord[];
       return jobs.map((entry) =>
-        typeof entry === "string" ? { job_id: entry } : entry
+        typeof entry === "string" ? { session_id: entry } : entry
       );
     }
     return trimmed
       .split(/\r?\n/)
       .filter((line) => line.trim())
       .map((line) => JSON.parse(line) as JsonRecord)
-      .map((entry) => (typeof entry === "string" ? { job_id: entry } : entry));
+      .map((entry) => (typeof entry === "string" ? { session_id: entry } : entry));
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code === "ENOENT") {
       return [];
@@ -74,16 +74,16 @@ async function loadJobs(path: string): Promise<JsonRecord[]> {
   }
 }
 
-export function buildHeaders(token?: string | null): HeadersInit {
+export function buildHeaders(apiKey?: string | null): HeadersInit {
   const headers: HeadersInit = { Accept: "application/json" };
-  if (token) {
-    (headers as Record<string, string>).Authorization = `Bearer ${token}`;
+  if (apiKey) {
+    (headers as Record<string, string>)["x-goog-api-key"] = apiKey;
   }
   return headers;
 }
 
-async function fetchJson(url: string, token?: string | null): Promise<JsonRecord> {
-  const response = await fetch(url, { headers: buildHeaders(token) });
+async function fetchJson(url: string, apiKey?: string | null): Promise<JsonRecord> {
+  const response = await fetch(url, { headers: buildHeaders(apiKey) });
   if (!response.ok) {
     const detail = await response.text();
     throw new Error(`HTTP ${response.status} for ${url}: ${detail}`);
@@ -92,37 +92,35 @@ async function fetchJson(url: string, token?: string | null): Promise<JsonRecord
   return text ? (JSON.parse(text) as JsonRecord) : {};
 }
 
-export function jobStatusUrl(apiBase: string, jobId: string): string {
-  return `${apiBase.replace(/\/$/, "")}/jobs/${jobId}`;
+export function sessionStatusUrl(apiBase: string, sessionId: string): string {
+  return `${apiBase.replace(/\/$/, "")}/sessions/${sessionId}`;
 }
 
-export function jobMessagesUrl(
+export function sessionActivitiesUrl(
   apiBase: string,
-  jobId: string,
-  cursor?: string
+  sessionId: string,
+  pageToken?: string
 ): string {
-  const base = `${apiBase.replace(/\/$/, "")}/jobs/${jobId}/messages`;
-  if (!cursor) {
+  const base = `${apiBase.replace(/\/$/, "")}/sessions/${sessionId}/activities`;
+  if (!pageToken) {
     return base;
   }
-  return `${base}?cursor=${encodeURIComponent(cursor)}`;
+  return `${base}?pageToken=${encodeURIComponent(pageToken)}`;
 }
 
-export function isQuestionMessage(message: JsonRecord): boolean {
-  const role = String(message.role ?? "").toLowerCase();
-  const tags = Array.isArray(message.tags)
-    ? message.tags.map((tag) => String(tag).toLowerCase()).join(" ")
-    : "";
-  const text = String(message.content ?? "").toLowerCase();
-  return (
-    tags.includes("question") ||
-    tags.includes("needs_input") ||
-    (text.includes("?") && role === "assistant")
-  );
+export function isQuestionActivity(activity: JsonRecord): boolean {
+  const agentMessaged = activity.agentMessaged as JsonRecord | undefined;
+  if (!agentMessaged) {
+    return false;
+  }
+  const text = String(
+    (agentMessaged as JsonRecord).agentMessage ?? ""
+  ).toLowerCase();
+  return text.includes("?");
 }
 
-export function findActionableMessage(messages: JsonRecord[]): JsonRecord | undefined {
-  return messages.find(isQuestionMessage);
+export function findActionableActivity(activities: JsonRecord[]): JsonRecord | undefined {
+  return activities.find(isQuestionActivity);
 }
 
 export function shouldEmitStuck(
@@ -144,76 +142,88 @@ export async function monitorOnce(
   jobs: JsonRecord[],
   state: Record<string, JobState>,
   apiBase: string,
-  token: string | undefined,
+  apiKey: string | undefined,
   eventsPath: string,
   stuckMinutes: number
 ): Promise<void> {
   for (const job of jobs) {
-    const jobId = String(job.job_id ?? "");
-    if (!jobId) {
+    const sessionId = String(job.session_id ?? "");
+    if (!sessionId) {
       continue;
     }
 
-    const jobState = (state[jobId] ??= {});
+    const jobState = (state[sessionId] ??= {});
 
     let statusPayload: JsonRecord;
     try {
-      statusPayload = await fetchJson(jobStatusUrl(apiBase, jobId), token);
+      statusPayload = await fetchJson(sessionStatusUrl(apiBase, sessionId), apiKey);
     } catch (error) {
       await appendJsonl(eventsPath, {
         event: "error",
-        job_id: jobId,
+        session_id: sessionId,
         observed_at: utcNow(),
         message: (error as Error).message,
       });
       continue;
     }
 
-    const status = statusPayload.status ? String(statusPayload.status) : undefined;
-    if (status && status !== jobState.last_status) {
-      jobState.last_status = status;
+    const sessionState = statusPayload.state ? String(statusPayload.state) : undefined;
+    if (sessionState && sessionState !== jobState.last_status) {
+      jobState.last_status = sessionState;
       jobState.last_activity = utcNow();
     }
 
-    if (status && ACTIONABLE_STATUSES.has(status)) {
+    if (sessionState && ACTIONABLE_STATUSES.has(sessionState)) {
       await appendJsonl(eventsPath, {
-        event: status === "COMPLETED" ? "completed" : "error",
-        job_id: jobId,
-        status,
+        event: sessionState === "COMPLETED" ? "completed" : "error",
+        session_id: sessionId,
+        state: sessionState,
         observed_at: utcNow(),
         payload: statusPayload,
       });
       continue;
     }
 
-    let messagesPayload: JsonRecord = {};
-    try {
-      messagesPayload = await fetchJson(
-        jobMessagesUrl(apiBase, jobId, jobState.cursor),
-        token
-      );
-    } catch (error) {
-      messagesPayload = {};
-    }
-
-    const cursor = messagesPayload.next_cursor
-      ? String(messagesPayload.next_cursor)
-      : undefined;
-    const messages = Array.isArray(messagesPayload.messages)
-      ? (messagesPayload.messages as JsonRecord[])
-      : [];
-    const actionableMessage = findActionableMessage(messages);
-
-    if (cursor) {
-      jobState.cursor = cursor;
-    }
-
-    if (actionableMessage) {
+    if (sessionState === "AWAITING_USER_FEEDBACK") {
       await appendJsonl(eventsPath, {
         event: "question",
-        job_id: jobId,
+        session_id: sessionId,
+        state: sessionState,
         observed_at: utcNow(),
-        message: actionableMessage,
+        payload: statusPayload,
+      });
+      jobState.last_activity = utcNow();
+      continue;
+    }
+
+    let activitiesPayload: JsonRecord = {};
+    try {
+      activitiesPayload = await fetchJson(
+        sessionActivitiesUrl(apiBase, sessionId, jobState.cursor),
+        apiKey
+      );
+    } catch (error) {
+      activitiesPayload = {};
+    }
+
+    const nextPageToken = activitiesPayload.nextPageToken
+      ? String(activitiesPayload.nextPageToken)
+      : undefined;
+    const activities = Array.isArray(activitiesPayload.activities)
+      ? (activitiesPayload.activities as JsonRecord[])
+      : [];
+    const actionableActivity = findActionableActivity(activities);
+
+    if (nextPageToken) {
+      jobState.cursor = nextPageToken;
+    }
+
+    if (actionableActivity) {
+      await appendJsonl(eventsPath, {
+        event: "question",
+        session_id: sessionId,
+        observed_at: utcNow(),
+        activity: actionableActivity,
       });
       jobState.last_activity = utcNow();
       continue;
@@ -222,7 +232,7 @@ export async function monitorOnce(
     if (shouldEmitStuck(jobState.last_activity, stuckMinutes)) {
       await appendJsonl(eventsPath, {
         event: "stuck",
-        job_id: jobId,
+        session_id: sessionId,
         observed_at: utcNow(),
         last_activity: jobState.last_activity ?? null,
       });
@@ -275,7 +285,7 @@ async function sleep(seconds: number): Promise<void> {
 
 async function main(): Promise<number> {
   const args = parseArgs(process.argv.slice(2));
-  const token = process.env.JULES_API_TOKEN;
+  const apiKey = process.env.JULES_API_KEY;
   const config = await loadConfig(args.config ?? DEFAULT_CONFIG_PATH);
 
   const jobsPath = args.jobs ?? (config.jobs_path as string | undefined);
@@ -311,12 +321,12 @@ async function main(): Promise<number> {
     try {
       const jobs = await loadJobs(jobsPath);
       if (jobs.length > 0) {
-        await monitorOnce(jobs, state, apiBase, token, eventsPath, stuckMinutes);
+        await monitorOnce(jobs, state, apiBase, apiKey, eventsPath, stuckMinutes);
       }
     } catch (error) {
       await appendJsonl(eventsPath, {
         event: "error",
-        job_id: null,
+        session_id: null,
         observed_at: utcNow(),
         message: `Monitor error: ${(error as Error).message}`,
       });
