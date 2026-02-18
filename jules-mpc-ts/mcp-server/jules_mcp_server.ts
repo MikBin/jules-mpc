@@ -1,13 +1,14 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { z } from "zod";
+import { fileURLToPath } from "url";
 
 const SERVER_NAME = "jules-mcp";
 const SERVER_VERSION = "1.0.0";
 
-const DEFAULT_API_BASE = "https://jules.googleapis.com/v1";
-const API_BASE = process.env.JULES_API_BASE ?? DEFAULT_API_BASE;
-const API_TOKEN = process.env.JULES_API_TOKEN;
+export const DEFAULT_API_BASE = "https://jules.googleapis.com/v1";
+export const API_BASE = process.env.JULES_API_BASE ?? DEFAULT_API_BASE;
+export const API_TOKEN = process.env.JULES_API_TOKEN;
 
 type JsonRecord = Record<string, unknown>;
 type StructuredContent = Record<string, unknown> | undefined;
@@ -16,7 +17,7 @@ type ToolResponse = {
   structuredContent?: StructuredContent;
 };
 
-function buildHeaders(): HeadersInit {
+export function buildHeaders(): HeadersInit {
   const headers: HeadersInit = {
     Accept: "application/json",
   };
@@ -26,7 +27,7 @@ function buildHeaders(): HeadersInit {
   return headers;
 }
 
-async function requestJson(
+export async function requestJson(
   url: string,
   options: RequestInit = {}
 ): Promise<unknown> {
@@ -51,12 +52,12 @@ async function requestJson(
   return text ? JSON.parse(text) : null;
 }
 
-function urlJoin(path: string): string {
+export function urlJoin(path: string): string {
   const normalized = path.startsWith("/") ? path.slice(1) : path;
   return `${API_BASE.replace(/\/$/, "")}/${normalized}`;
 }
 
-async function createJob(payload: JsonRecord): Promise<unknown> {
+export async function createJob(payload: JsonRecord): Promise<unknown> {
   return requestJson(urlJoin("jobs"), {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -64,16 +65,16 @@ async function createJob(payload: JsonRecord): Promise<unknown> {
   });
 }
 
-async function getJob(jobId: string): Promise<unknown> {
+export async function getJob(jobId: string): Promise<unknown> {
   return requestJson(urlJoin(`jobs/${jobId}`));
 }
 
-async function getMessages(jobId: string, cursor?: string): Promise<unknown> {
+export async function getMessages(jobId: string, cursor?: string): Promise<unknown> {
   const query = cursor ? `?cursor=${encodeURIComponent(cursor)}` : "";
   return requestJson(urlJoin(`jobs/${jobId}/messages${query}`));
 }
 
-async function sendMessage(jobId: string, message: JsonRecord): Promise<unknown> {
+export async function sendMessage(jobId: string, message: JsonRecord): Promise<unknown> {
   return requestJson(urlJoin(`jobs/${jobId}/messages`), {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -81,15 +82,15 @@ async function sendMessage(jobId: string, message: JsonRecord): Promise<unknown>
   });
 }
 
-async function getArtifacts(jobId: string): Promise<unknown> {
+export async function getArtifacts(jobId: string): Promise<unknown> {
   return requestJson(urlJoin(`jobs/${jobId}/artifacts`));
 }
 
-async function requestRetry(jobId: string): Promise<unknown> {
+export async function requestRetry(jobId: string): Promise<unknown> {
   return requestJson(urlJoin(`jobs/${jobId}:retry`), { method: "POST" });
 }
 
-async function mergePr(jobId: string, payload: JsonRecord): Promise<unknown> {
+export async function mergePr(jobId: string, payload: JsonRecord): Promise<unknown> {
   return requestJson(urlJoin(`jobs/${jobId}:merge`), {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -97,11 +98,11 @@ async function mergePr(jobId: string, payload: JsonRecord): Promise<unknown> {
   });
 }
 
-async function cancelJob(jobId: string): Promise<unknown> {
+export async function cancelJob(jobId: string): Promise<unknown> {
   return requestJson(urlJoin(`jobs/${jobId}:cancel`), { method: "POST" });
 }
 
-async function listJobs(repo: string, limit: number): Promise<unknown> {
+export async function listJobs(repo: string, limit: number): Promise<unknown> {
   const query = `?repo=${encodeURIComponent(repo)}&limit=${limit}`;
   return requestJson(urlJoin(`jobs${query}`));
 }
@@ -124,7 +125,7 @@ function buildToolResponse(payload: unknown): ToolResponse {
   };
 }
 
-const server = new McpServer({
+export const server = new McpServer({
   name: SERVER_NAME,
   version: SERVER_VERSION,
 });
@@ -301,7 +302,9 @@ async function main(): Promise<void> {
   console.error(`${SERVER_NAME} MCP server running on stdio`);
 }
 
-main().catch((error) => {
-  console.error("Fatal error in MCP server:", error);
-  process.exit(1);
-});
+if (process.argv[1] === fileURLToPath(import.meta.url)) {
+  main().catch((error) => {
+    console.error("Fatal error in MCP server:", error);
+    process.exit(1);
+  });
+}

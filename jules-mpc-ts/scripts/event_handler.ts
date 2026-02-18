@@ -1,6 +1,7 @@
 import { execFile } from "child_process";
 import { dirname } from "path";
 import { promises as fs } from "fs";
+import { fileURLToPath } from "url";
 
 const DEFAULT_CONFIG_PATH = process.env.JULES_CONFIG ?? "jules-manager/config.json";
 
@@ -77,7 +78,7 @@ async function runMcp(
   });
 }
 
-async function handleQuestion(event: JsonRecord, mcpCommand: MCPCommand): Promise<void> {
+export async function handleQuestion(event: JsonRecord, mcpCommand: MCPCommand): Promise<void> {
   const jobId = event.job_id ?? "unknown";
   const message = event.message ?? {};
   const content = (message as JsonRecord).content ?? JSON.stringify(message);
@@ -91,7 +92,7 @@ async function handleQuestion(event: JsonRecord, mcpCommand: MCPCommand): Promis
   }
 }
 
-async function handleCompleted(event: JsonRecord, mcpCommand: MCPCommand): Promise<void> {
+export async function handleCompleted(event: JsonRecord, mcpCommand: MCPCommand): Promise<void> {
   const jobId = event.job_id ?? "unknown";
   const status = event.status ?? "UNKNOWN";
 
@@ -108,7 +109,7 @@ async function handleCompleted(event: JsonRecord, mcpCommand: MCPCommand): Promi
   console.error(`  Artifacts: ${JSON.stringify(artifacts, null, 2)}`);
 }
 
-async function handleError(event: JsonRecord, mcpCommand: MCPCommand): Promise<void> {
+export async function handleError(event: JsonRecord, mcpCommand: MCPCommand): Promise<void> {
   const jobId = event.job_id ?? "unknown";
   const status = event.status ?? "UNKNOWN";
   const message = event.message ?? "No error details available";
@@ -122,7 +123,7 @@ async function handleError(event: JsonRecord, mcpCommand: MCPCommand): Promise<v
   }
 }
 
-async function handleStuck(event: JsonRecord, mcpCommand: MCPCommand): Promise<void> {
+export async function handleStuck(event: JsonRecord, mcpCommand: MCPCommand): Promise<void> {
   const jobId = event.job_id ?? "unknown";
   const lastActivity = event.last_activity ?? "unknown";
 
@@ -189,7 +190,9 @@ async function main(): Promise<number> {
   return 0;
 }
 
-main().catch((error) => {
-  console.error("Fatal error in event handler:", error);
-  process.exit(1);
-});
+if (process.argv[1] === fileURLToPath(import.meta.url)) {
+  main().catch((error) => {
+    console.error("Fatal error in event handler:", error);
+    process.exit(1);
+  });
+}

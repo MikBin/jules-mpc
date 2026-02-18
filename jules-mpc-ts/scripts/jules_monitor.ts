@@ -1,5 +1,6 @@
 import { promises as fs } from "fs";
 import { dirname } from "path";
+import { fileURLToPath } from "url";
 
 const DEFAULT_API_BASE = "https://jules.googleapis.com/v1";
 const DEFAULT_POLL_SECONDS = 45;
@@ -21,7 +22,7 @@ function utcNow(): string {
   return new Date().toISOString();
 }
 
-async function loadJson<T>(path: string, fallback: T): Promise<T> {
+export async function loadJson<T>(path: string, fallback: T): Promise<T> {
   try {
     const content = await fs.readFile(path, "utf8");
     return JSON.parse(content) as T;
@@ -73,7 +74,7 @@ async function loadJobs(path: string): Promise<JsonRecord[]> {
   }
 }
 
-function buildHeaders(token?: string | null): HeadersInit {
+export function buildHeaders(token?: string | null): HeadersInit {
   const headers: HeadersInit = { Accept: "application/json" };
   if (token) {
     (headers as Record<string, string>).Authorization = `Bearer ${token}`;
@@ -91,11 +92,11 @@ async function fetchJson(url: string, token?: string | null): Promise<JsonRecord
   return text ? (JSON.parse(text) as JsonRecord) : {};
 }
 
-function jobStatusUrl(apiBase: string, jobId: string): string {
+export function jobStatusUrl(apiBase: string, jobId: string): string {
   return `${apiBase.replace(/\/$/, "")}/jobs/${jobId}`;
 }
 
-function jobMessagesUrl(
+export function jobMessagesUrl(
   apiBase: string,
   jobId: string,
   cursor?: string
@@ -107,7 +108,7 @@ function jobMessagesUrl(
   return `${base}?cursor=${encodeURIComponent(cursor)}`;
 }
 
-function isQuestionMessage(message: JsonRecord): boolean {
+export function isQuestionMessage(message: JsonRecord): boolean {
   const role = String(message.role ?? "").toLowerCase();
   const tags = Array.isArray(message.tags)
     ? message.tags.map((tag) => String(tag).toLowerCase()).join(" ")
@@ -120,11 +121,11 @@ function isQuestionMessage(message: JsonRecord): boolean {
   );
 }
 
-function findActionableMessage(messages: JsonRecord[]): JsonRecord | undefined {
+export function findActionableMessage(messages: JsonRecord[]): JsonRecord | undefined {
   return messages.find(isQuestionMessage);
 }
 
-function shouldEmitStuck(
+export function shouldEmitStuck(
   lastActivity: string | undefined,
   thresholdMinutes: number
 ): boolean {
@@ -139,7 +140,7 @@ function shouldEmitStuck(
   return delta >= thresholdMinutes * 60 * 1000;
 }
 
-async function monitorOnce(
+export async function monitorOnce(
   jobs: JsonRecord[],
   state: Record<string, JobState>,
   apiBase: string,
@@ -326,7 +327,9 @@ async function main(): Promise<number> {
   }
 }
 
-main().catch((error) => {
-  console.error("Fatal error in monitor:", error);
-  process.exit(1);
-});
+if (process.argv[1] === fileURLToPath(import.meta.url)) {
+  main().catch((error) => {
+    console.error("Fatal error in monitor:", error);
+    process.exit(1);
+  });
+}
