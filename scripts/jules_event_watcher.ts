@@ -72,6 +72,17 @@ async function saveState(path: string, state: WatcherState): Promise<void> {
   await fs.writeFile(path, JSON.stringify(state, null, 2), "utf8");
 }
 
+function parseCommandString(value: unknown): string | undefined {
+  if (Array.isArray(value)) {
+    const joined = value.map(String).filter(Boolean).join(" ").trim();
+    return joined || undefined;
+  }
+  if (typeof value === "string" && value.trim()) {
+    return value.trim();
+  }
+  return undefined;
+}
+
 function runCommand(command: string, event: JsonRecord): Promise<number> {
   return new Promise((resolve) => {
     const child = spawn(command, {
@@ -168,7 +179,8 @@ async function main(): Promise<number> {
   const config = await loadConfig(args.config ?? DEFAULT_CONFIG_PATH);
 
   const eventsPath = args.events ?? (config.events_path as string | undefined);
-  const command = args.command;
+  const command =
+    args.command ?? parseCommandString(config.event_command);
   const pollSeconds =
     args.poll ??
     (config.watcher_poll_seconds as number | undefined) ??

@@ -67,7 +67,7 @@ sequenceDiagram
 
 #### Server Identity
 - **Name:** `jules-mcp`
-- **Version:** `2.0.0`
+- **Version:** `1.3.0`
 - **Protocol Version:** `2024-11-05`
 - **Transport:** stdio JSON-RPC
 
@@ -75,22 +75,24 @@ sequenceDiagram
 
 | Tool | Description | Parameters | Jules API Endpoint |
 |------|-------------|------------|-------------------|
-| `jules_create_session` | Create a new Jules session | owner, repo, branch, prompt | POST /sessions |
+| `jules_create_session` | Create a new Jules session | owner, repo, branch, prompt, (title), (requirePlanApproval), (automationMode), (workingBranch), (environmentVariablesEnabled) | POST /sessions |
 | `jules_get_session` | Fetch session metadata and status | session_id | GET /sessions/{id} |
-| `jules_list_sessions` | List all sessions | pageSize, pageToken | GET /sessions |
+| `jules_list_sessions` | List all sessions (non-archived by default; filter/includeArchived optional) | (pageSize), (pageToken), (filter), (includeArchived) | GET /sessions |
 | `jules_delete_session` | Delete a session | session_id | DELETE /sessions/{id} |
+| `jules_archive_session` | Archive a session (hide from default list) | session_id | POST /sessions/{id}:archive |
+| `jules_unarchive_session` | Restore an archived session | session_id | POST /sessions/{id}:unarchive |
 | `jules_send_message` | Send a message to Jules | session_id, message | POST /sessions/{id}:sendMessage |
 | `jules_approve_plan` | Approve a pending plan | session_id | POST /sessions/{id}:approvePlan |
-| `jules_list_activities` | List session activities | session_id, pageSize, pageToken | GET /sessions/{id}/activities |
+| `jules_list_activities` | List session activities | session_id, (pageSize), (pageToken) | GET /sessions/{id}/activities |
 | `jules_get_activity` | Get a single activity | session_id, activity_id | GET /sessions/{id}/activities/{id} |
-| `jules_list_sources` | List connected repositories | pageSize, pageToken | GET /sources |
+| `jules_list_sources` | List connected repositories | (pageSize), (pageToken) | GET /sources |
 | `jules_get_source` | Get source details | source_id | GET /sources/{id} |
-| `jules_extract_pr_from_session` | Extract PR details from completed session | session_id | GET /sessions/{id} |
+| `jules_extract_pr_from_session` | Extract PR and/or change set from a completed session | session_id | GET /sessions/{id} |
 
 #### Authentication
-- Uses `JULES_API_TOKEN` environment variable
-- Bearer token authentication in Authorization header
-- Optional `JULES_API_BASE` for custom endpoints
+- Uses `JULES_API_KEY` environment variable
+- Passed via the `X-Goog-Api-Key` header
+- Optional `JULES_API_BASE` for custom endpoints (default `https://jules.googleapis.com/v1alpha`)
 
 ---
 
@@ -215,16 +217,16 @@ jules-manager/
 
 ```json
 {
-  "sessions_path": "jules-manager/sessions.jsonl",
-  "events_path": "jules-manager/events.jsonl",
-  "monitor_state_path": "jules-manager/.monitor_state.json",
-  "watcher_state_path": "jules-manager/.watcher_state.json",
+  "jobs_path": "jobs.jsonl",
+  "events_path": "events.jsonl",
+  "monitor_state_path": ".monitor_state.json",
+  "watcher_state_path": ".watcher_state.json",
   "monitor_poll_seconds": 45,
   "watcher_poll_seconds": 1,
   "stuck_minutes": 20,
-  "api_base": "https://jules.googleapis.com/v1",
-  "mcp_command": ["node", "jules-manager/build/mcp-server/jules_mcp_server.js"],
-  "event_command": ["node", "jules-manager/scripts/event_handler.js"]
+  "api_base": "https://jules.googleapis.com/v1alpha",
+  "mcp_command": ["node", "build/mcp-server/jules_mcp_server.js"],
+  "event_command": ["node", "build/scripts/event_handler.js"]
 }
 ```
 

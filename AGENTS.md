@@ -93,8 +93,10 @@ git pull origin <branch>
 | `jules_create_session` | Create a new Jules coding session for a GitHub repository |
 | `jules_get_session` | Fetch session metadata, state, and outputs |
 | `jules_check_jules` | Minimal polling check returning `Q`, `C`, `F`, or `N` |
-| `jules_list_sessions` | List all Jules sessions |
+| `jules_list_sessions` | List sessions (non-archived by default; `filter`/`includeArchived` optional) |
 | `jules_delete_session` | Delete a Jules session |
+| `jules_archive_session` | Archive a session (hide from default list) |
+| `jules_unarchive_session` | Restore an archived session |
 | `jules_approve_plan` | Approve the plan for a session awaiting approval |
 | `jules_send_message` | Send a clarification or instruction to a session |
 
@@ -129,7 +131,9 @@ git pull origin <branch>
 - `prompt` (string, required): Task description for Jules
 - `title` (string, optional): Session title
 - `requirePlanApproval` (boolean, optional): Require plan approval before execution (default: false)
-- `automationMode` (string, optional): Set to `"AUTO_CREATE_PR"` for automatic PR creation
+- `automationMode` (enum, optional): `"AUTO_CREATE_PR"` (default) or `"AUTOMATION_MODE_UNSPECIFIED"`. Note the Jules API itself defaults to no automation.
+- `workingBranch` (string, optional): Branch Jules pushes changes to (distinct from the starting branch). If omitted, Jules generates one.
+- `environmentVariablesEnabled` (boolean, optional): Enables environment variables configured for this source in the session.
 
 #### jules_get_session
 - `session_id` (string, required): The Jules session ID
@@ -157,6 +161,12 @@ git pull origin <branch>
 #### jules_delete_session
 - `session_id` (string, required): The Jules session ID
 
+#### jules_archive_session
+- `session_id` (string, required): The Jules session ID to archive (POST `sessions/{id}:archive`)
+
+#### jules_unarchive_session
+- `session_id` (string, required): The Jules session ID to unarchive (POST `sessions/{id}:unarchive`)
+
 #### jules_wait
 - `seconds` (number, required): Duration to wait in seconds (max 600)
 
@@ -165,6 +175,7 @@ git pull origin <branch>
 | State | Description |
 |-------|-------------|
 | `IN_PROGRESS` | Session is actively working |
+| `PAUSED` | Session is paused (no automated action; maps to `N` on compact check) |
 | `AWAITING_PLAN_APPROVAL` | Plan ready for review and approval |
 | `AWAITING_USER_FEEDBACK` | Session needs input or clarification |
 | `COMPLETED` | Session finished successfully (check outputs for PR) |
@@ -172,11 +183,9 @@ git pull origin <branch>
 
 ### Session Outputs
 
-When a session completes successfully with `automationMode: "AUTO_CREATE_PR"`, the session outputs contain:
-- `changeSet.gitPatch`: The diff/patch of changes made
-- `changeSet.suggestedCommitMessage`: Suggested commit message
-- `pullRequest.url`: The created PR URL
-- `pullRequest.title`: PR title
-- `pullRequest.description`: PR description
-- `pullRequest.baseRef`: Target branch
-- `pullRequest.headRef`: Feature branch created
+`jules_extract_pr_from_session` returns the artifacts present in a completed session's outputs:
+- `pullRequest.url`, `pullRequest.title`, `pullRequest.description`, `pullRequest.baseRef`, `pullRequest.headRef`: the full PR (present when `AUTO_CREATE_PR` was used)
+- `changeSet.source`, `changeSet.gitPatch.baseCommitId`, `changeSet.gitPatch.unidiffPatch`, `changeSet.gitPatch.suggestedCommitMessage`: the change set / patch (present even when no PR was created, e.g. `AUTOMATION_MODE_UNSPECIFIED`)
+- `sessionUrl`: the Jules web-app deep link, when available
+- Very large unidiff patches are truncated (with `unidiffTruncated` and `unidiffOriginalLength` reported)
+- If neither a PR nor a change set exists, returns an actionable error message

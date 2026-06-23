@@ -7,7 +7,7 @@ import { fileURLToPath } from "url";
 import { getJulesConfig } from "../src/utils.js";
 
 const SERVER_NAME = "jules-mcp";
-const SERVER_VERSION = "2.0.0";
+const SERVER_VERSION = "1.3.0";
 
 const config = getJulesConfig();
 export const DEFAULT_API_BASE = "https://jules.googleapis.com/v1alpha";
@@ -34,6 +34,13 @@ const MAX_WAIT_SECONDS = 600;
 const SESSION_PATH_PREFIX = "sessions/";
 const PROJECT_SESSION_PAGE_SIZE = 50;
 const MAX_PROJECT_SESSION_SCAN_PAGES = 20;
+const REQUEST_TIMEOUT_MS = 30_000;
+const MAX_RETRIES = 2;
+const RETRY_BACKOFF_MS = 1_000;
+const MAX_PATCH_CHARS = 20_000;
+
+const sleep = (ms: number): Promise<void> =>
+  new Promise((resolve) => setTimeout(resolve, ms));
 
 export type CompactCheckCode = "Q" | "C" | "F" | "N";
 
@@ -65,25 +72,62 @@ export async function requestJson(
   url: string,
   options: RequestInit = {}
 ): Promise<unknown> {
-  const response = await fetch(url, {
-    ...options,
-    headers: {
-      ...buildHeaders(),
-      ...(options.headers ?? {}),
-    },
-  });
+  let attempt = 0;
+  while (true) {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
+    try {
+      const response = await fetch(url, {
+        ...options,
+        headers: {
+          ...buildHeaders(),
+          ...(options.headers ?? {}),
+        },
+        signal: controller.signal,
+      });
 
-  if (!response.ok) {
-    const detail = await response.text();
-    throw new Error(`HTTP ${response.status} for ${url}: ${detail}`);
+      if (response.status === 429 || response.status >= 500) {
+        const detail = await response.text();
+        if (attempt < MAX_RETRIES) {
+          attempt += 1;
+          await sleep(RETRY_BACKOFF_MS * 2 ** (attempt - 1));
+          continue;
+        }
+        throw new Error(
+          `HTTP ${response.status} for ${url}: ${detail} (after ${attempt} retries)`
+        );
+      }
+
+      if (!response.ok) {
+        const detail = await response.text();
+        throw new Error(`HTTP ${response.status} for ${url}: ${detail}`);
+      }
+
+      if (response.status === 204) {
+        return null;
+      }
+
+      const text = await response.text();
+      return text ? JSON.parse(text) : null;
+    } catch (error) {
+      const aborted =
+        controller.signal.aborted ||
+        (error instanceof Error && error.name === "AbortError");
+      if (aborted) {
+        if (attempt < MAX_RETRIES) {
+          attempt += 1;
+          await sleep(RETRY_BACKOFF_MS * 2 ** (attempt - 1));
+          continue;
+        }
+        throw new Error(
+          `Request timed out after ${REQUEST_TIMEOUT_MS}ms for ${url} (after ${attempt} retries)`
+        );
+      }
+      throw error;
+    } finally {
+      clearTimeout(timer);
+    }
   }
-
-  if (response.status === 204) {
-    return null;
-  }
-
-  const text = await response.text();
-  return text ? JSON.parse(text) : null;
 }
 
 export function urlJoin(path: string): string {
@@ -256,11 +300,13 @@ export async function getSession(sessionId: string): Promise<unknown> {
 
 export async function listSessions(
   pageSize?: number,
-  pageToken?: string
+  pageToken?: string,
+  filter?: string
 ): Promise<unknown> {
   const params = new URLSearchParams();
   if (pageSize !== undefined) params.set("pageSize", String(pageSize));
   if (pageToken) params.set("pageToken", pageToken);
+  if (filter) params.set("filter", filter);
   const query = params.toString() ? `?${params.toString()}` : "";
   return requestJson(urlJoin(`sessions${query}`));
 }
@@ -287,6 +333,22 @@ export async function sendMessage(
 
 export async function approvePlan(sessionId: string): Promise<unknown> {
   return requestJson(urlJoin(`sessions/${normalizeSessionId(sessionId)}:approvePlan`), {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({}),
+  });
+}
+
+export async function archiveSession(sessionId: string): Promise<unknown> {
+  return requestJson(urlJoin(`sessions/${normalizeSessionId(sessionId)}:archive`), {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({}),
+  });
+}
+
+export async function unarchiveSession(sessionId: string): Promise<unknown> {
+  return requestJson(urlJoin(`sessions/${normalizeSessionId(sessionId)}:unarchive`), {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({}),
@@ -369,6 +431,77 @@ function buildCompactToolResponse(
   };
 }
 
+export function extractSessionArtifacts(
+  sessionId: string,
+  sessionData: JsonRecord
+): JsonRecord {
+  const outputs = Array.isArray(sessionData.outputs)
+    ? (sessionData.outputs as JsonRecord[])
+    : [];
+
+  const base: JsonRecord = {
+    sessionId,
+    sessionState: sessionData.state,
+  };
+  if (typeof sessionData.url === "string") {
+    base.sessionUrl = sessionData.url;
+  }
+
+  const prOutput = outputs.find((output) => output.pullRequest);
+  const csOutput = outputs.find((output) => output.changeSet);
+  const pullRequest = prOutput?.pullRequest as JsonRecord | undefined;
+  const changeSet = csOutput?.changeSet as JsonRecord | undefined;
+
+  if (!pullRequest && !changeSet) {
+    return {
+      ...base,
+      error:
+        "No pull request or change set found in session outputs. " +
+        "The session may still be running, may not have produced changes, " +
+        "or automationMode may have been disabled (no PR created).",
+    };
+  }
+
+  const result: JsonRecord = { ...base };
+
+  if (pullRequest) {
+    result.pullRequest = {
+      url: pullRequest.url,
+      title: pullRequest.title,
+      description: pullRequest.description,
+      baseRef: pullRequest.baseRef,
+      headRef: pullRequest.headRef,
+    };
+  }
+
+  if (changeSet) {
+    const gitPatch = (changeSet.gitPatch as JsonRecord | undefined) ?? {};
+    const rawUnidiff =
+      typeof gitPatch.unidiffPatch === "string"
+        ? gitPatch.unidiffPatch
+        : undefined;
+    const patchResult: JsonRecord = {
+      baseCommitId: gitPatch.baseCommitId,
+      suggestedCommitMessage: gitPatch.suggestedCommitMessage,
+    };
+    if (rawUnidiff !== undefined) {
+      if (rawUnidiff.length > MAX_PATCH_CHARS) {
+        patchResult.unidiffPatch = rawUnidiff.slice(0, MAX_PATCH_CHARS);
+        patchResult.unidiffTruncated = true;
+        patchResult.unidiffOriginalLength = rawUnidiff.length;
+      } else {
+        patchResult.unidiffPatch = rawUnidiff;
+      }
+    }
+    result.changeSet = {
+      source: changeSet.source,
+      gitPatch: patchResult,
+    };
+  }
+
+  return result;
+}
+
 // --- MCP Server ---
 
 export const server = new McpServer({
@@ -393,18 +526,57 @@ server.registerTool(
         .optional()
         .describe("Whether to require plan approval before execution"),
       automationMode: z
+        .enum(["AUTO_CREATE_PR", "AUTOMATION_MODE_UNSPECIFIED"])
+        .optional()
+        .describe(
+          'Automation mode. Defaults to "AUTO_CREATE_PR" (Jules auto-opens a pull request on successful completion). ' +
+            'Note: the Jules API itself defaults to no automation. Use "AUTOMATION_MODE_UNSPECIFIED" to disable PR creation.'
+        ),
+      workingBranch: z
         .string()
         .optional()
-        .describe('Automation mode, e.g. "AUTO_CREATE_PR"'),
+        .describe(
+          "Optional branch Jules pushes its changes to. If omitted, Jules generates a branch name. Distinct from the starting branch."
+        ),
+      environmentVariablesEnabled: z
+        .boolean()
+        .optional()
+        .describe(
+          "Optional. Enables environment variables configured for this source within the session."
+        ),
+    },
+    annotations: {
+      readOnlyHint: false,
+      destructiveHint: false,
+      idempotentHint: false,
+      openWorldHint: true,
     },
   },
-  async ({ owner, repo, branch, prompt, title, requirePlanApproval, automationMode }) => {
+  async ({
+    owner,
+    repo,
+    branch,
+    prompt,
+    title,
+    requirePlanApproval,
+    automationMode,
+    workingBranch,
+    environmentVariablesEnabled,
+  }) => {
+    const githubRepoContext: JsonRecord = { startingBranch: branch };
+    const sourceContext: JsonRecord = {
+      source: `sources/github/${owner}/${repo}`,
+      githubRepoContext,
+    };
+    if (workingBranch !== undefined) {
+      sourceContext.workingBranch = workingBranch;
+    }
+    if (environmentVariablesEnabled !== undefined) {
+      sourceContext.environmentVariablesEnabled = environmentVariablesEnabled;
+    }
     const body: JsonRecord = {
       prompt,
-      sourceContext: {
-        source: `sources/github/${owner}/${repo}`,
-        githubRepoContext: { startingBranch: branch },
-      },
+      sourceContext,
       automationMode: automationMode ?? "AUTO_CREATE_PR",
     };
     if (title !== undefined) body.title = title;
@@ -422,6 +594,12 @@ server.registerTool(
     description: "Fetch session metadata, state, and outputs",
     inputSchema: {
       session_id: z.string().describe("The Jules session ID"),
+    },
+    annotations: {
+      readOnlyHint: true,
+      destructiveHint: false,
+      idempotentHint: true,
+      openWorldHint: true,
     },
   },
   async ({ session_id }) => {
@@ -449,6 +627,12 @@ server.registerTool(
         .string()
         .optional()
         .describe("Optional session ID; if provided, owner/repo are ignored"),
+    },
+    annotations: {
+      readOnlyHint: true,
+      destructiveHint: false,
+      idempotentHint: true,
+      openWorldHint: true,
     },
   },
   async ({ owner, repo, branch, session_id }) => {
@@ -487,14 +671,38 @@ server.registerTool(
   "jules_list_sessions",
   {
     title: "List sessions",
-    description: "List Jules sessions",
+    description:
+      "List Jules sessions. By default only non-archived sessions are returned " +
+      "(Jules API default). Set includeArchived=true to also return archived sessions, " +
+      "or pass a raw AIP-160 filter (e.g. 'archived = true').",
     inputSchema: {
       pageSize: z.number().optional().describe("Maximum number of sessions to return"),
       pageToken: z.string().optional().describe("Page token for pagination"),
+      filter: z
+        .string()
+        .optional()
+        .describe(
+          "Optional AIP-160 filter expression (e.g. 'archived = true'). Overrides includeArchived when set."
+        ),
+      includeArchived: z
+        .boolean()
+        .optional()
+        .describe(
+          "If true, include archived sessions (sets filter to 'archived = true OR archived = false' unless filter is given)."
+        ),
+    },
+    annotations: {
+      readOnlyHint: true,
+      destructiveHint: false,
+      idempotentHint: true,
+      openWorldHint: true,
     },
   },
-  async ({ pageSize, pageToken }) => {
-    const payload = await listSessions(pageSize, pageToken);
+  async ({ pageSize, pageToken, filter, includeArchived }) => {
+    const effectiveFilter =
+      filter ??
+      (includeArchived ? "archived = true OR archived = false" : undefined);
+    const payload = await listSessions(pageSize, pageToken, effectiveFilter);
     return buildToolResponse(payload);
   }
 );
@@ -506,6 +714,12 @@ server.registerTool(
     description: "Delete a Jules session",
     inputSchema: {
       session_id: z.string().describe("The Jules session ID"),
+    },
+    annotations: {
+      readOnlyHint: false,
+      destructiveHint: true,
+      idempotentHint: true,
+      openWorldHint: true,
     },
   },
   async ({ session_id }) => {
@@ -523,6 +737,12 @@ server.registerTool(
       session_id: z.string().describe("The Jules session ID"),
       message: z.string().describe("Message text to send"),
     },
+    annotations: {
+      readOnlyHint: false,
+      destructiveHint: false,
+      idempotentHint: false,
+      openWorldHint: true,
+    },
   },
   async ({ session_id, message }) => {
     const payload = await sendMessage(session_id, message);
@@ -537,6 +757,12 @@ server.registerTool(
     description: "Approve the plan for a session awaiting plan approval",
     inputSchema: {
       session_id: z.string().describe("The Jules session ID"),
+    },
+    annotations: {
+      readOnlyHint: false,
+      destructiveHint: false,
+      idempotentHint: true,
+      openWorldHint: true,
     },
   },
   async ({ session_id }) => {
@@ -555,6 +781,12 @@ server.registerTool(
       pageSize: z.number().optional().describe("Maximum number of activities to return"),
       pageToken: z.string().optional().describe("Page token for pagination"),
     },
+    annotations: {
+      readOnlyHint: true,
+      destructiveHint: false,
+      idempotentHint: true,
+      openWorldHint: true,
+    },
   },
   async ({ session_id, pageSize, pageToken }) => {
     const payload = await listActivities(session_id, pageSize, pageToken);
@@ -570,6 +802,12 @@ server.registerTool(
     inputSchema: {
       session_id: z.string().describe("The Jules session ID"),
       activity_id: z.string().describe("The activity ID"),
+    },
+    annotations: {
+      readOnlyHint: true,
+      destructiveHint: false,
+      idempotentHint: true,
+      openWorldHint: true,
     },
   },
   async ({ session_id, activity_id }) => {
@@ -587,6 +825,12 @@ server.registerTool(
       pageSize: z.number().optional().describe("Maximum number of sources to return"),
       pageToken: z.string().optional().describe("Page token for pagination"),
     },
+    annotations: {
+      readOnlyHint: true,
+      destructiveHint: false,
+      idempotentHint: true,
+      openWorldHint: true,
+    },
   },
   async ({ pageSize, pageToken }) => {
     const payload = await listSources(pageSize, pageToken);
@@ -602,6 +846,12 @@ server.registerTool(
     inputSchema: {
       source_id: z.string().describe("The source ID"),
     },
+    annotations: {
+      readOnlyHint: true,
+      destructiveHint: false,
+      idempotentHint: true,
+      openWorldHint: true,
+    },
   },
   async ({ source_id }) => {
     const payload = await getSource(source_id);
@@ -614,43 +864,23 @@ server.registerTool(
   {
     title: "Extract PR details from completed session",
     description:
-      "Extract pull request information from a completed Jules session outputs",
+      "Extract pull request and/or change set information from a completed Jules session's outputs. " +
+      "Returns the full pull request (url, title, description, baseRef, headRef) when AUTO_CREATE_PR was used, " +
+      "and the change set (git patch, suggested commit message) when present. " +
+      "Sessions that produced a patch but no PR still return their changeSet.",
     inputSchema: {
       session_id: z.string().describe("The completed Jules session ID"),
     },
+    annotations: {
+      readOnlyHint: true,
+      destructiveHint: false,
+      idempotentHint: true,
+      openWorldHint: true,
+    },
   },
   async ({ session_id }) => {
-    const session = await getSession(session_id);
-    const sessionData = session as JsonRecord;
-
-    if (!sessionData.outputs || !Array.isArray(sessionData.outputs)) {
-      return buildToolResponse({
-        error: "No outputs found in session",
-        sessionId: session_id,
-      });
-    }
-
-    const prOutput = (sessionData.outputs as JsonRecord[]).find(
-      (output) => output.pullRequest
-    );
-
-    if (!prOutput) {
-      return buildToolResponse({
-        error: "No pull request found in session outputs",
-        sessionId: session_id,
-      });
-    }
-
-    const pullRequest = prOutput.pullRequest as JsonRecord;
-    return buildToolResponse({
-      pullRequest: {
-        url: pullRequest.url,
-        title: pullRequest.title,
-        description: pullRequest.description,
-      },
-      sessionId: session_id,
-      sessionState: sessionData.state,
-    });
+    const session = (await getSession(session_id)) as JsonRecord;
+    return buildToolResponse(extractSessionArtifacts(session_id, session));
   }
 );
 
@@ -666,6 +896,12 @@ server.registerTool(
       seconds: z
         .number()
         .describe("Duration to wait in seconds (max 600)"),
+    },
+    annotations: {
+      readOnlyHint: true,
+      destructiveHint: false,
+      idempotentHint: true,
+      openWorldHint: false,
     },
   },
   async ({ seconds }) => {
@@ -694,6 +930,12 @@ server.registerTool(
         .describe(
           "Polling interval in seconds (default: 60, max: 300)"
         ),
+    },
+    annotations: {
+      readOnlyHint: true,
+      destructiveHint: false,
+      idempotentHint: false,
+      openWorldHint: true,
     },
   },
   async ({ session_id, poll_interval_seconds }, extra) => {
@@ -769,6 +1011,51 @@ server.registerTool(
 
       await new Promise((resolve) => setTimeout(resolve, intervalMs));
     }
+  }
+);
+
+server.registerTool(
+  "jules_archive_session",
+  {
+    title: "Archive a session",
+    description:
+      "Archive a Jules session. Archived sessions are hidden from the default session list " +
+      "(the Jules API list defaults to non-archived only). Use jules_unarchive_session to restore.",
+    inputSchema: {
+      session_id: z.string().describe("The Jules session ID to archive"),
+    },
+    annotations: {
+      readOnlyHint: false,
+      destructiveHint: false,
+      idempotentHint: true,
+      openWorldHint: true,
+    },
+  },
+  async ({ session_id }) => {
+    const payload = await archiveSession(session_id);
+    return buildToolResponse(payload);
+  }
+);
+
+server.registerTool(
+  "jules_unarchive_session",
+  {
+    title: "Unarchive a session",
+    description:
+      "Restore an archived Jules session so it reappears in the default session list.",
+    inputSchema: {
+      session_id: z.string().describe("The Jules session ID to unarchive"),
+    },
+    annotations: {
+      readOnlyHint: false,
+      destructiveHint: false,
+      idempotentHint: true,
+      openWorldHint: true,
+    },
+  },
+  async ({ session_id }) => {
+    const payload = await unarchiveSession(session_id);
+    return buildToolResponse(payload);
   }
 );
 

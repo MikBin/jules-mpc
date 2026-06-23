@@ -5,16 +5,20 @@ import {
   normalizeSessionId,
   compactStatusCodeFromState,
   findCurrentProjectSession,
+  extractSessionArtifacts,
   createSession,
   getSession,
   listSessions,
   deleteSession,
   sendMessage,
   approvePlan,
+  archiveSession,
+  unarchiveSession,
   listActivities,
   getActivity,
   listSources,
   getSource,
+  requestJson,
   wait,
   API_BASE,
   DEFAULT_API_BASE
@@ -75,6 +79,8 @@ describe('jules_mcp_server', () => {
 
     it('should default to N for non-actionable states', () => {
       expect(compactStatusCodeFromState('IN_PROGRESS')).toBe('N');
+      expect(compactStatusCodeFromState('PAUSED')).toBe('N');
+      expect(compactStatusCodeFromState('QUEUED')).toBe('N');
       expect(compactStatusCodeFromState(undefined)).toBe('N');
     });
   });
@@ -367,6 +373,225 @@ describe('jules_mcp_server', () => {
 
     it('should reject Infinity', async () => {
       await expect(wait(Infinity)).rejects.toThrow('non-negative finite');
+    });
+  });
+
+  describe('listSessions filter', () => {
+    const mockResponse = (data: any, ok = true, status = 200) => {
+      fetchMock.mockResolvedValue({
+        ok,
+        status,
+        text: async () => (data !== null ? JSON.stringify(data) : ''),
+      });
+    };
+
+    it('should pass a filter query param', async () => {
+      mockResponse({ sessions: [] });
+
+      await listSessions(10, undefined, 'archived = true');
+
+      expect(fetchMock).toHaveBeenCalledWith(
+        expect.stringContaining('filter=archived+%3D+true'),
+        expect.any(Object)
+      );
+    });
+
+    it('should omit filter when not provided', async () => {
+      mockResponse({ sessions: [] });
+
+      await listSessions();
+
+      const calledUrl = String((fetchMock.mock.calls[0] as unknown[])[0]);
+      expect(calledUrl).not.toContain('filter');
+    });
+  });
+
+  describe('archive / unarchive', () => {
+    const mockResponse = (data: any, ok = true, status = 200) => {
+      fetchMock.mockResolvedValue({
+        ok,
+        status,
+        text: async () => (data !== null ? JSON.stringify(data) : ''),
+      });
+    };
+
+    it('archiveSession should POST to /sessions/{id}:archive with empty body', async () => {
+      mockResponse({ name: 'sessions/s-123', archived: true });
+
+      const result = await archiveSession('s-123');
+
+      expect(fetchMock).toHaveBeenCalledWith(
+        expect.stringMatching(/\/sessions\/s-123:archive$/),
+        expect.objectContaining({
+          method: 'POST',
+          body: JSON.stringify({}),
+        })
+      );
+      expect(result).toEqual({ name: 'sessions/s-123', archived: true });
+    });
+
+    it('unarchiveSession should POST to /sessions/{id}:unarchive with empty body', async () => {
+      mockResponse({ name: 'sessions/s-123', archived: false });
+
+      const result = await unarchiveSession('sessions/s-123');
+
+      expect(fetchMock).toHaveBeenCalledWith(
+        expect.stringMatching(/\/sessions\/s-123:unarchive$/),
+        expect.objectContaining({
+          method: 'POST',
+          body: JSON.stringify({}),
+        })
+      );
+      expect(result).toEqual({ name: 'sessions/s-123', archived: false });
+    });
+  });
+
+  describe('extractSessionArtifacts', () => {
+    it('should return the full pull request including baseRef/headRef and session url', () => {
+      const result = extractSessionArtifacts('s-1', {
+        state: 'COMPLETED',
+        url: 'https://jules.google.com/session/s-1',
+        outputs: [
+          {
+            pullRequest: {
+              url: 'https://github.com/a/b/pull/1',
+              title: 'T',
+              description: 'D',
+              baseRef: 'main',
+              headRef: 'feature-x',
+            },
+          },
+        ],
+      } as any);
+
+      expect(result).toMatchObject({
+        sessionId: 's-1',
+        sessionState: 'COMPLETED',
+        sessionUrl: 'https://jules.google.com/session/s-1',
+        pullRequest: {
+          url: 'https://github.com/a/b/pull/1',
+          title: 'T',
+          description: 'D',
+          baseRef: 'main',
+          headRef: 'feature-x',
+        },
+      });
+      expect(result.changeSet).toBeUndefined();
+    });
+
+    it('should return changeSet (patch + commit message) when there is no PR', () => {
+      const result = extractSessionArtifacts('s-2', {
+        state: 'COMPLETED',
+        outputs: [
+          {
+            changeSet: {
+              source: 'sources/github/a/b',
+              gitPatch: {
+                baseCommitId: 'abc123',
+                unidiffPatch: 'diff --git a/x b/x\n',
+                suggestedCommitMessage: 'feat: x',
+              },
+            },
+          },
+        ],
+      } as any);
+
+      expect(result.pullRequest).toBeUndefined();
+      expect(result.changeSet).toEqual({
+        source: 'sources/github/a/b',
+        gitPatch: {
+          baseCommitId: 'abc123',
+          unidiffPatch: 'diff --git a/x b/x\n',
+          suggestedCommitMessage: 'feat: x',
+        },
+      });
+    });
+
+    it('should return an actionable error when neither PR nor changeSet exists', () => {
+      const result = extractSessionArtifacts('s-3', {
+        state: 'IN_PROGRESS',
+        outputs: [],
+      } as any);
+
+      expect(result.error).toMatch(/No pull request or change set found/);
+    });
+
+    it('should handle missing outputs gracefully', () => {
+      const result = extractSessionArtifacts('s-4', { state: 'RUNNING' } as any);
+      expect(result.error).toMatch(/No pull request or change set found/);
+    });
+
+    it('should truncate very large unidiff patches and report original length', () => {
+      const huge = 'x'.repeat(50_000);
+      const result = extractSessionArtifacts('s-5', {
+        state: 'COMPLETED',
+        outputs: [
+          {
+            changeSet: {
+              source: 'sources/github/a/b',
+              gitPatch: { unidiffPatch: huge, suggestedCommitMessage: 'm' },
+            },
+          },
+        ],
+      } as any);
+
+      const patch = result.changeSet.gitPatch;
+      expect(patch.unidiffPatch.length).toBe(20_000);
+      expect(patch.unidiffTruncated).toBe(true);
+      expect(patch.unidiffOriginalLength).toBe(50_000);
+      expect(patch.suggestedCommitMessage).toBe('m');
+    });
+  });
+
+  describe('requestJson retry/backoff', () => {
+    beforeEach(() => {
+      vi.useFakeTimers();
+    });
+
+    afterEach(() => {
+      vi.useRealTimers();
+    });
+
+    const mockOnce = (status: number, body: any) => {
+      fetchMock.mockResolvedValueOnce({
+        ok: status >= 200 && status < 300,
+        status,
+        text: async () => (body !== null ? JSON.stringify(body) : ''),
+      });
+    };
+
+    it('should retry on 429 and succeed on a later attempt', async () => {
+      mockOnce(429, { error: 'rate limited' });
+      mockOnce(429, { error: 'rate limited' });
+      mockOnce(200, { ok: true });
+
+      const pending = requestJson(`${API_BASE}/sessions`);
+      await vi.advanceTimersByTimeAsync(3000);
+      const result = await pending;
+
+      expect(result).toEqual({ ok: true });
+      expect(fetchMock).toHaveBeenCalledTimes(3);
+    });
+
+    it('should throw after exhausting retries on 500', async () => {
+      mockOnce(500, { error: 'boom' });
+      mockOnce(500, { error: 'boom' });
+      mockOnce(500, { error: 'boom' });
+
+      const pending = requestJson(`${API_BASE}/sessions`);
+      const assertion = expect(pending).rejects.toThrow(/HTTP 500/);
+      await vi.advanceTimersByTimeAsync(5000);
+      await assertion;
+      expect(fetchMock).toHaveBeenCalledTimes(3);
+    });
+
+    it('should not retry on 404', async () => {
+      mockOnce(404, 'Not Found');
+
+      await expect(requestJson(`${API_BASE}/sessions/missing`)).rejects.toThrow(
+        'HTTP 404'
+      );
+      expect(fetchMock).toHaveBeenCalledTimes(1);
     });
   });
 });

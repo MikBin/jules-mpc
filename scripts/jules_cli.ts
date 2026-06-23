@@ -113,6 +113,16 @@ async function approveSession(args: Record<string, string | undefined>) {
   console.log(JSON.stringify(result, null, 2));
 }
 
+async function archiveSession(args: Record<string, string | undefined>) {
+  const result = await callTool("jules_archive_session", { session_id: args["session-id"] });
+  console.log(JSON.stringify(result, null, 2));
+}
+
+async function unarchiveSession(args: Record<string, string | undefined>) {
+  const result = await callTool("jules_unarchive_session", { session_id: args["session-id"] });
+  console.log(JSON.stringify(result, null, 2));
+}
+
 async function monitorSession(args: Record<string, string | undefined>) {
   const sessionId = args["session-id"];
   const interval = parseInt(args.interval || "120", 10) * 1000;
@@ -158,10 +168,10 @@ async function main(): Promise<number> {
   
   if (!args.command) {
     console.error("Usage: jules_cli <command> [options]");
-    console.error("Commands: create, get, list, approve, monitor");
+    console.error("Commands: create, get, list, approve, archive, unarchive, monitor");
     return 1;
   }
-  
+
   try {
     switch (args.command) {
       case "create":
@@ -175,6 +185,12 @@ async function main(): Promise<number> {
         break;
       case "approve":
         await approveSession(args);
+        break;
+      case "archive":
+        await archiveSession(args);
+        break;
+      case "unarchive":
+        await unarchiveSession(args);
         break;
       case "monitor":
         await monitorSession(args);

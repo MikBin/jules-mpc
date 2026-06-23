@@ -1,4 +1,4 @@
-# Jules Manager (TypeScript) (Server Version 2.0.0)
+# Jules Manager (TypeScript) (Server Version 1.3.0)
 
 An MCP server implementation for orchestrating Google Jules as a remote coding agent from a local coding agent. The system handles the full lifecycle: task decomposition, API-based dispatch to Jules, asynchronous status monitoring, intervention handling, code review, and PR merging.
 
@@ -56,13 +56,15 @@ npm run jules -- <command> [options]
 
 **Commands:**
 
-| Command   | Description                              | Options |
-|-----------|------------------------------------------|---------|
-| `create`  | Create a new Jules session               | `--owner`, `--repo`, `--branch`, `--prompt`, `--title`, `--require-approval`, `--automation-mode` |
-| `get`     | Get session details                      | `--session-id` |
-| `list`    | List all sessions                        | *(none)* |
-| `approve` | Approve a session's plan                 | `--session-id` |
-| `monitor` | Poll a session until it completes/fails  | `--session-id`, `--interval` (seconds, default 120) |
+| Command     | Description                              | Options |
+|-------------|------------------------------------------|---------|
+| `create`    | Create a new Jules session               | `--owner`, `--repo`, `--branch`, `--prompt`, `--title`, `--require-approval`, `--automation-mode` |
+| `get`       | Get session details                      | `--session-id` |
+| `list`      | List all sessions                        | *(none)* |
+| `approve`   | Approve a session's plan                 | `--session-id` |
+| `archive`   | Archive a session                        | `--session-id` |
+| `unarchive` | Restore an archived session              | `--session-id` |
+| `monitor`   | Poll a session until it completes/fails  | `--session-id`, `--interval` (seconds, default 120) |
 
 **Examples:**
 
@@ -93,7 +95,7 @@ npm run mcp-client -- --command node build/mcp-server/jules_mcp_server.js --tool
 
 ## MCP Tools
 
-The Jules MCP server exposes the following 14 tools to manage the lifecycle of Jules sessions.
+The Jules MCP server exposes the following 16 tools to manage the lifecycle of Jules sessions.
 
 ### `jules_create_session`
 Create a new Jules coding session for a GitHub repository.
@@ -107,7 +109,9 @@ Create a new Jules coding session for a GitHub repository.
 - `prompt` (string, required): Task description for Jules.
 - `title` (string, optional): Optional session title.
 - `requirePlanApproval` (boolean, optional): Whether to require plan approval before execution.
-- `automationMode` (string, optional): Automation mode. Defaults to `"AUTO_CREATE_PR"` (Jules automatically publishes a pull request upon successful completion). Passing an empty string or alternative mode will override this.
+- `automationMode` (enum, optional): `"AUTO_CREATE_PR"` (default — Jules auto-opens a PR on completion) or `"AUTOMATION_MODE_UNSPECIFIED"` (no PR). Note the Jules API itself defaults to no automation.
+- `workingBranch` (string, optional): Branch Jules pushes its changes to. If omitted, Jules generates a branch name. Distinct from the starting branch.
+- `environmentVariablesEnabled` (boolean, optional): Enables environment variables configured for this source within the session.
 
 **Usage Example:**
 ```bash
@@ -151,11 +155,13 @@ npm run mcp-client -- --command node build/mcp-server/jules_mcp_server.js --tool
 ```
 
 ### `jules_list_sessions`
-List Jules sessions.
+List Jules sessions. By default only **non-archived** sessions are returned (this matches the Jules API default). Set `includeArchived` or pass a raw AIP-160 `filter` to change this.
 
 **Parameters:**
 - `pageSize` (number, optional): Maximum number of sessions to return.
 - `pageToken` (string, optional): Page token for pagination.
+- `filter` (string, optional): AIP-160 filter expression (e.g. `'archived = true'`). Overrides `includeArchived` when set.
+- `includeArchived` (boolean, optional): If true, includes archived sessions (sets the filter to `'archived = true OR archived = false'` unless `filter` is also given).
 
 **Usage Example:**
 ```bash
@@ -171,6 +177,28 @@ Delete a Jules session.
 **Usage Example:**
 ```bash
 npm run mcp-client -- --command node build/mcp-server/jules_mcp_server.js --tool jules_delete_session --arguments '{"session_id": "sessions/12345"}'
+```
+
+### `jules_archive_session`
+Archive a Jules session. Archived sessions are hidden from the default session list (the API list defaults to non-archived only). Use `jules_unarchive_session` to restore.
+
+**Parameters:**
+- `session_id` (string, required): The Jules session ID to archive.
+
+**Usage Example:**
+```bash
+npm run mcp-client -- --command node build/mcp-server/jules_mcp_server.js --tool jules_archive_session --arguments '{"session_id": "sessions/12345"}'
+```
+
+### `jules_unarchive_session`
+Restore an archived Jules session so it reappears in the default session list.
+
+**Parameters:**
+- `session_id` (string, required): The Jules session ID to unarchive.
+
+**Usage Example:**
+```bash
+npm run mcp-client -- --command node build/mcp-server/jules_mcp_server.js --tool jules_unarchive_session --arguments '{"session_id": "sessions/12345"}'
 ```
 
 ### `jules_send_message`
@@ -245,7 +273,11 @@ npm run mcp-client -- --command node build/mcp-server/jules_mcp_server.js --tool
 ```
 
 ### `jules_extract_pr_from_session`
-Extract pull request information from a completed Jules session outputs.
+Extract pull request and/or change set information from a completed Jules session's outputs.
+
+Returns the **full** pull request (`url`, `title`, `description`, `baseRef`, `headRef`) when `AUTO_CREATE_PR` was used, plus the **change set** (`changeSet.source`, `changeSet.gitPatch.baseCommitId`, `unidiffPatch`, `suggestedCommitMessage`) when present. Sessions that produced a git patch but **no PR** (e.g. `automationMode` disabled) still return their `changeSet` and suggested commit message. Very large unidiff patches are truncated (with `unidiffTruncated` and `unidiffOriginalLength` reported). Also includes `sessionUrl` when the API provides one.
+
+If neither a pull request nor a change set is present, returns an actionable error message explaining the likely causes (session still running, no changes produced, or automation disabled).
 
 **Parameters:**
 - `session_id` (string, required): The completed Jules session ID.

@@ -9,7 +9,7 @@ This server implements the MCP protocol for interacting with Google Jules, an AI
 ## Server Identity
 
 - **Name:** `jules-mcp`
-- **Version:** `2.0.0`
+- **Version:** `1.3.0`
 - **Protocol Version:** `2024-11-05`
 - **Transport:** stdio JSON-RPC
 
@@ -53,7 +53,7 @@ Response:
   "id": 1,
   "result": {
     "protocolVersion": "2024-11-05",
-    "serverInfo": {"name": "jules-mcp", "version": "2.0.0"},
+    "serverInfo": {"name": "jules-mcp", "version": "1.3.0"},
     "capabilities": {"tools": {}}
   }
 }
@@ -86,15 +86,18 @@ Response:
 | `jules_create_session` | Create a new Jules session | owner, repo, branch, prompt |
 | `jules_get_session` | Fetch session metadata and status | session_id |
 | `jules_check_jules` | Minimal status check for polling (`Q/C/F/N`) | session_id OR owner+repo |
-| `jules_list_sessions` | List all sessions | (none required) |
+| `jules_list_sessions` | List sessions (non-archived by default; filter/includeArchived optional) | (none required) |
 | `jules_delete_session` | Delete a session | session_id |
+| `jules_archive_session` | Archive a session (hide from default list) | session_id |
+| `jules_unarchive_session` | Restore an archived session | session_id |
 | `jules_send_message` | Send a message to Jules | session_id, message |
 | `jules_approve_plan` | Approve a pending plan | session_id |
 | `jules_list_activities` | List session activities | session_id |
 | `jules_get_activity` | Get a single activity | session_id, activity_id |
 | `jules_list_sources` | List connected repositories | (none required) |
 | `jules_get_source` | Get source details | source_id |
-| `jules_extract_pr_from_session` | Extract PR details from completed session | session_id |
+| `jules_extract_pr_from_session` | Extract PR and/or change set from a completed session | session_id |
+| `jules_monitor_session` | Poll a session until it completes/fails, with progress notifications | session_id |
 | `jules_wait` | Pause execution for a given number of seconds (max 600) | seconds |
 
 ### Minimal Polling Tool

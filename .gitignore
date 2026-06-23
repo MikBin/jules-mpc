@@ -14,7 +14,13 @@ stderr.txt
 .watcher_state.json
 events.jsonl
 jobs.jsonl
-.idea/jules-mcp.iml
-.idea/modules.xml
-.idea/vcs.xml
-.idea/workspace.xml
+
+# Vendored / third-party MCP servers (kept out of this repo)
+mcp-servers/
+
+# Playwright MCP runtime artifacts
+.playwright-mcp/
+
+# IDE
+.idea/
+.vscode/

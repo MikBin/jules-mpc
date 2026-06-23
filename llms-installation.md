@@ -4,7 +4,7 @@ This guide provides the necessary information for AI agents (like Amp, Cline, Wi
 
 ## Metadata
 - **Name:** jules-mcp
-- **Version:** 1.0.0
+- **Version:** 1.3.0
 - **Language:** TypeScript/Node.js
 - **Capabilities:** Coding Agent Orchestration, Session Management, Activity Listing, PR Extraction.
 
@@ -95,17 +95,19 @@ Or via npx (no local clone needed):
 ```
 
 ## Available Tools
-- `jules_create_session`: Initialize a new coding task. **Important:** Always use the repository's default branch (`main` or `master`) as the starting branch. Jules automatically creates its own feature branch for each session.
+- `jules_create_session`: Initialize a new coding task. **Important:** Always use the repository's default branch (`main` or `master`) as the starting branch. Jules automatically creates its own feature branch for each session. Optional `workingBranch` and `environmentVariablesEnabled` inputs are supported.
 - `jules_get_session`: Retrieve state and metadata for a session.
 - `jules_check_jules`: Minimal polling status check returning only `Q`, `C`, `F`, or `N`.
-- `jules_list_sessions`: List active and past sessions.
+- `jules_list_sessions`: List sessions. Non-archived by default; pass `includeArchived=true` or a raw AIP-160 `filter` to include archived sessions.
 - `jules_delete_session`: Delete a Jules session.
+- `jules_archive_session`: Archive a session (hide it from the default list).
+- `jules_unarchive_session`: Restore an archived session.
 - `jules_send_message`: Provide additional instructions to Jules.
 - `jules_approve_plan`: Approve a proposed coding plan.
 - `jules_list_activities`: View the detailed log of Jules' actions.
 - `jules_get_activity`: Get a single activity by ID for a session.
 - `jules_list_sources`: List available sources (GitHub repositories).
 - `jules_get_source`: Get details for a specific source.
-- `jules_extract_pr_from_session`: Get PR details from a finished session.
+- `jules_extract_pr_from_session`: Get the full PR (incl. baseRef/headRef) and/or change set (git patch + suggested commit message) from a finished session.
 - `jules_monitor_session`: Poll a session until it completes or fails, with progress notifications.
 - `jules_wait`: Pause execution for a given number of seconds (max 600) to conserve tokens between polling calls.
